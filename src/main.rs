@@ -3,6 +3,10 @@ mod gears;
 
 use eframe::{CreationContext, egui::*};
 use glam::Vec2;
+// Multi-threading -> use tokio for web browser support?
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
 
 #[cfg(not(target_arch = "wasm32"))]
 
@@ -67,15 +71,7 @@ fn main() {
     });
 }
 
-struct EngineState {}
-
-struct Settings {}
-
-struct Mumper {
-    viewport: Rect,
-    viewport_painter: Painter,
-    smoothed_fps: f32,
-    // Settings,
+struct Settings {
     segments: u16,
     radius: f32,
     // TODO : Add radius limits
@@ -85,74 +81,147 @@ struct Mumper {
     zoom_sensitivity: f32,
     min_ppm: i16,
     max_ppm: i16,
-    // State
-    ppm: i16, // Pixel Per Meter = Zoom value
-    camera_position: Vec2,
-    camera_size_x: f32,
-    camera_size_y: f32,
-    // Objects Data
-    circles_position: Vec<glam::Vec2>,
-    circles_points: Vec<Vec<glam::Vec2>>,
-    circles_strokes: Vec<Stroke>,
 }
 
-impl Mumper {
-    fn new(cc: &CreationContext) -> Self {
-        let circles_position: Vec<glam::Vec2> = vec![
-            Vec2::new(1.0, 1.0),
-            Vec2::new(1.5, 1.0),
-            Vec2::new(2.0, 1.0),
-        ];
-
-        let circle_points1 = gears::circle_points(circles_position[0], 1.0, 20);
-        let circle_points2 = gears::circle_points(circles_position[1], 1.5, 20);
-        let circle_points3 = gears::circle_points(circles_position[2], 2.0, 20);
-
-        let circles_points = vec![circle_points1, circle_points2, circle_points3];
-        let circles_strokes = vec![
-            Stroke::new(2.0, Color32::RED),
-            Stroke::new(2.0, Color32::GREEN),
-            Stroke::new(2.0, Color32::BLUE),
-        ];
-
-        Self {
-            viewport: cc.egui_ctx.content_rect(),
-            viewport_painter: cc.egui_ctx.debug_painter(),
-            smoothed_fps: 0.0,
-            // Settings
+impl Settings {
+    fn new() -> Self {
+        return Self {
             segments: 20,
             radius: 1.0,
             stroke_color: Color32::RED,
             stroke_width: 2.0,
             camera_sensitivity: 0.001,
-            zoom_sensitivity: 0.3,
+            zoom_sensitivity: 0.003,
             min_ppm: 10,
             max_ppm: 1000,
-            // State
+        };
+    }
+}
+
+// Shared between Rendering & Physic Threads
+struct MumperPhysics {
+    positions: Vec<Vec2>,
+    speeds: Vec<Vec2>, // meters / frame -> at 60 fps = meters / 0.016sec -> * 60 = meters / sec eg 0.1 = 6 meters / sec
+}
+
+impl MumperPhysics {
+    fn new(positions: Vec<Vec2>, speeds: Vec<Vec2>) -> Self {
+        return Self { positions, speeds };
+    }
+
+    // Physics update
+    fn tick(&mut self, dt: f32) {
+        // simulate
+        for i in 0..self.positions.len() {
+            self.positions[i].x += self.speeds[i].x * dt;
+            self.positions[i].y += self.speeds[i].y * dt;
+
+            // pos.y -= 9.81 * dt; // Simple gravity fall
+            // if pos.y < 0.0 { pos.y = 0.0; } // Square collision
+        }
+    }
+}
+
+struct EngineState {
+    // View
+    viewport: Rect,
+    viewport_painter: Painter,
+    smoothed_fps: f32,
+    // World
+    ppm: i16, // Pixel Per Meter = Zoom value
+    camera_position: Vec2,
+    camera_size_x: f32,
+    camera_size_y: f32,
+    // Objects Data
+    // TODO : ECS
+    // Smart IDs
+    physics: Arc<Mutex<MumperPhysics>>,
+    positions: Vec<Vec2>, // Store positions
+    points: Vec<Vec<Vec2>>,
+    strokes: Vec<Stroke>,
+}
+
+// TODO : Create Physic & Rendering Threads
+impl EngineState {
+    fn new(viewport: Rect, viewport_painter: Painter) -> Self {
+        // Default = Square + 3 Circles
+        let positions: Vec<Vec2> = vec![
+            Vec2::ZERO,
+            Vec2::new(1.0, 1.0),
+            Vec2::new(1.5, 1.0),
+            Vec2::new(2.0, 1.0),
+        ];
+
+        let speeds: Vec<Vec2> = vec![
+            Vec2::ZERO,
+            Vec2::new(0.01, 0.0),
+            Vec2::new(0.01, 0.01),
+            Vec2::new(-0.01, 0.0),
+        ];
+
+        let square_points = vec![
+            Vec2::new(5.0, -5.0),
+            Vec2::new(5.0, 5.0),
+            Vec2::new(-5.0, 5.0),
+            Vec2::new(-5.0, -5.0),
+        ];
+
+        let circle_points1 = gears::circle_points(positions[1], 1.0, 20);
+        let circle_points2 = gears::circle_points(positions[2], 1.5, 20);
+        let circle_points3 = gears::circle_points(positions[3], 2.0, 20);
+
+        let points = vec![
+            square_points,
+            circle_points1,
+            circle_points2,
+            circle_points3,
+        ];
+
+        let strokes = vec![
+            Stroke::new(5.0, Color32::LIGHT_YELLOW),
+            Stroke::new(2.0, Color32::RED),
+            Stroke::new(2.0, Color32::GREEN),
+            Stroke::new(2.0, Color32::BLUE),
+        ];
+
+        let physics = Arc::new(Mutex::new(MumperPhysics::new(positions, speeds)));
+
+        let physics_clone = Arc::clone(&physics);
+        
+        // Start Physic Thread
+        thread::spawn(move || {
+            let mut last_tick = Instant::now();
+
+            loop {
+                let now = Instant::now();
+                let dt = now.duration_since(last_tick).as_secs_f32();
+                last_tick = now;
+
+                {
+                    let mut physics = physics_clone.lock().unwrap();
+                    physics.tick(dt);
+                }
+
+                thread::sleep(Duration::from_millis(8));
+            }
+        });
+
+        return Self {
+            // View
+            viewport,
+            viewport_painter,
+            smoothed_fps: 0.0,
+            // World
             ppm: 100,
             camera_position: Vec2::ZERO,
             camera_size_x: 4.0,
             camera_size_y: 4.0,
-            circles_position,
-            circles_points,
-            circles_strokes,
-        }
-    }
-
-    // SCENE
-
-    fn create_circle(&mut self, position: glam::Vec2, radius: f32, segments: u16, stroke: Stroke) {
-        let circle_points = gears::circle_points(position, radius, segments);
-
-        self.circles_position.push(position);
-        self.circles_points.push(circle_points);
-        self.circles_strokes.push(stroke);
-    }
-
-    fn clear_circles(&mut self) {
-        self.circles_position.clear();
-        self.circles_points.clear();
-        self.circles_strokes.clear();
+            physics,
+            positions: vec![],
+            // speeds,
+            points,
+            strokes,
+        };
     }
 
     // RENDERING
@@ -166,12 +235,16 @@ impl Mumper {
     // let camera_left = camera_position - camera_size_x / 2;
     // let object_viewport_position_x = (-1 * camera_left + world_pos.x) / camera_size_x;
     fn world_to_screen(&self, world_pos: glam::Vec2) -> Pos2 {
-        // 2] Camera view -> Viewport
-        let camera_left = self.camera_position.x - self.camera_size_x / 2.0;
-        let camera_bot = self.camera_position.y - self.camera_size_y / 2.0;
+        let camera_position = self.camera_position;
+        let camera_size_x = self.camera_size_x;
+        let camera_size_y = self.camera_size_y;
 
-        let fulcrum_x = (-1.0 * camera_left + world_pos.x) / self.camera_size_x;
-        let fulcrum_y = 1.0 - (-1.0 * camera_bot + world_pos.y) / self.camera_size_y; // y inverted = ui
+        // 2] Camera view -> Viewport
+        let camera_left = camera_position.x - camera_size_x / 2.0;
+        let camera_bot = camera_position.y - camera_size_y / 2.0;
+
+        let fulcrum_x = (-1.0 * camera_left + world_pos.x) / camera_size_x;
+        let fulcrum_y = 1.0 - (-1.0 * camera_bot + world_pos.y) / camera_size_y; // y inverted = ui
 
         let screen_pos_x = fulcrum_x * self.viewport.width();
         let screen_pos_y = fulcrum_y * self.viewport.height();
@@ -181,8 +254,10 @@ impl Mumper {
     }
 
     fn screen_to_world(&self, screen_pos: Pos2) -> Vec2 {
-        let camera_left = self.camera_position.x - self.camera_size_x / 2.0;
-        let camera_bot = self.camera_position.y - self.camera_size_y / 2.0;
+        let camera_position = self.camera_position;
+
+        let camera_left = camera_position.x - self.camera_size_x / 2.0;
+        let camera_bot = camera_position.y - self.camera_size_y / 2.0;
 
         let ppm = self.ppm as f32;
         let world_pos_x = camera_left + screen_pos.x / ppm;
@@ -191,17 +266,22 @@ impl Mumper {
         return Vec2::new(world_pos_x, world_pos_y);
     }
 
-    fn render_frame(&self) {
+    fn render_frame(&mut self) {
         // TODO : Check if object is in frame
 
+        self.positions = {
+            let physics = self.physics.lock().unwrap();
+            physics.positions.clone()
+        };
+
         // Draw Circles
-        for i in 0..self.circles_position.len() {
-            self.draw_circle(self.circles_strokes[i], &self.circles_points[i]);
+        for i in 0..self.positions.len() {
+            self.draw_polygon(self.strokes[i], &self.points[i]);
         }
     }
 
     // Draw an edge between each circle point
-    fn draw_circle(&self, stroke: Stroke, circle_points: &Vec<glam::Vec2>) {
+    fn draw_polygon(&self, stroke: Stroke, circle_points: &Vec<glam::Vec2>) {
         for index in 0..circle_points.len() {
             let end_index = (index + 1) % circle_points.len();
 
@@ -214,60 +294,109 @@ impl Mumper {
         }
     }
 
+    // SCENE
+
+    fn create_polygon(&mut self, position: glam::Vec2, radius: f32, segments: u16, stroke: Stroke) {
+        let circle_points = gears::circle_points(position, radius, segments);
+
+        {
+            let mut physics = self.physics.lock().unwrap();
+            physics.positions.push(position);
+            physics.speeds.push(Vec2::new(0.0, 0.0)); // TODO : Add Speed Setting
+        };
+
+        self.points.push(circle_points);
+        self.strokes.push(stroke);
+    }
+
+    fn clear_polygons(&mut self) {
+        self.positions.clear();
+        self.points.clear();
+        self.strokes.clear();
+    }
+}
+
+struct Mumper {
+    settings: Settings,
+    state: EngineState,
+}
+
+impl Mumper {
+    fn new(cc: &CreationContext) -> Self {
+        Self {
+            settings: Settings::new(),
+            state: EngineState::new(cc.egui_ctx.content_rect(), cc.egui_ctx.debug_painter()),
+        }
+    }
+
+    fn reset_settings(&mut self) {
+        self.settings = Settings::new();
+    }
+
+    fn reset_scene(&mut self) {
+        self.state = EngineState::new(self.state.viewport, self.state.viewport_painter.clone());
+    }
+
     // UI COMPONENTS
 
     fn ui_settings(&mut self, ui: &mut Ui) {
+        let settings = &mut self.settings;
+
         ui.horizontal(|ui| {
             ui.label("Segments :");
-            ui.add(egui::Slider::new(&mut self.segments, 3..=100));
+            ui.add(egui::Slider::new(&mut settings.segments, 3..=100));
             ui.label("Radius :");
-            ui.add(egui::Slider::new(&mut self.radius, 0.1..=10.0));
+            ui.add(egui::Slider::new(&mut settings.radius, 0.1..=10.0));
         });
 
         // Stroke Settings
         ui.horizontal(|ui| {
             ui.label("Stroke Width :");
-            ui.add(egui::Slider::new(&mut self.stroke_width, 1.0..=10.0));
+            ui.add(egui::Slider::new(&mut settings.stroke_width, 1.0..=10.0));
 
             let color_label = ui.label("Stroke Color :");
-            ui.color_edit_button_srgba(&mut self.stroke_color)
+            ui.color_edit_button_srgba(&mut settings.stroke_color)
                 .labelled_by(color_label.id);
         });
     }
 
     fn ui_state(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            if ui.button("Clear Circles").clicked() {
-                self.clear_circles();
+            if ui.button("Reset Scene").clicked() {
+                self.reset_scene();
             }
+
+            let settings = &mut self.settings;
+            let state = &mut self.state;
 
             ui.label("Zoom :");
             ui.add(egui::Slider::new(
-                &mut self.ppm,
-                self.min_ppm..=self.max_ppm,
+                &mut state.ppm,
+                settings.min_ppm..=settings.max_ppm,
             ));
         });
     }
 
     // Displayed on top of the viewport
     fn hud(&mut self, fps: f32) {
-        let painter = &mut self.viewport_painter;
+        let state = &mut self.state;
+        let painter = &mut state.viewport_painter;
 
         // FPS Display
         let alpha = 0.05;
-        self.smoothed_fps = (self.smoothed_fps * (1.0 - alpha)) + (fps * alpha);
+        state.smoothed_fps = (state.smoothed_fps * (1.0 - alpha)) + (fps * alpha);
 
         painter.text(
-            self.viewport.left_top() + egui::vec2(10.0, 10.0), // 10px padding from top-left
+            state.viewport.left_top() + egui::vec2(10.0, 10.0), // 10px padding from top-left
             egui::Align2::LEFT_TOP,
-            format!("FPS: {:.2}", self.smoothed_fps),
+            format!("FPS: {:.2}", state.smoothed_fps),
             egui::FontId::proportional(14.0),
             egui::Color32::WHITE,
         );
 
         // Controls Display
         painter.text(
-            self.viewport.left_top() + egui::vec2(10.0, 30.0),
+            state.viewport.left_top() + egui::vec2(10.0, 30.0),
             egui::Align2::LEFT_TOP,
             "Look : Right Click",
             egui::FontId::proportional(14.0),
@@ -278,6 +407,9 @@ impl Mumper {
     // CONTROLS
 
     fn input_handling(&mut self, response: Response, input_state: &InputState) {
+        let settings = &mut self.settings;
+        let state = &mut self.state;
+
         // 1] Input Detection
         let pointer_delta: egui::Vec2 = input_state.pointer.delta();
         let lclick_released = input_state.pointer.primary_released();
@@ -289,29 +421,30 @@ impl Mumper {
         }
 
         // 2] Input Reaction
+        let ppm = state.ppm as f32;
         // Camera limits -> Depend on viewport size
-        self.camera_size_x = self.viewport.width() / self.ppm as f32;
-        self.camera_size_y = self.viewport.height() / self.ppm as f32;
+        state.camera_size_x = state.viewport.width() / ppm;
+        state.camera_size_y = state.viewport.height() / ppm;
 
-        // Change zoom with mousewheel
-        let mousewheel_delta = input_state.smooth_scroll_delta * self.zoom_sensitivity;
-        self.ppm = (self.ppm + mousewheel_delta.y as i16).clamp(self.min_ppm, self.max_ppm); // Notch based zoom
+        // Mousewheel = Zoom
+        let scroll_delta = input_state.smooth_scroll_delta.y * settings.zoom_sensitivity * ppm;
+        state.ppm = (state.ppm + scroll_delta as i16).clamp(settings.min_ppm, settings.max_ppm); // Notch based zoom
 
         // RClick = Move Camera
         if rclick_hold {
-            let sensivity = self.camera_sensitivity * (self.max_ppm / self.ppm) as f32;
-            self.camera_position.x -= pointer_delta.x * sensivity;
-            self.camera_position.y += pointer_delta.y * sensivity;
+            let sensivity = settings.camera_sensitivity * (settings.max_ppm / state.ppm) as f32;
+            state.camera_position.x -= pointer_delta.x * sensivity;
+            state.camera_position.y += pointer_delta.y * sensivity;
         }
 
         // LClick = Create Circle
         if lclick_released && response.hovered() {
-            let world_pos = self.screen_to_world(global_pointer_position);
-            self.create_circle(
+            let world_pos = state.screen_to_world(global_pointer_position);
+            state.create_polygon(
                 world_pos,
-                self.radius,
-                self.segments,
-                Stroke::new(self.stroke_width, self.stroke_color),
+                settings.radius,
+                settings.segments,
+                Stroke::new(settings.stroke_width, settings.stroke_color),
             );
         }
     }
@@ -328,6 +461,7 @@ impl eframe::App for Mumper {
 
             self.ui_settings(ui);
             self.ui_state(ui);
+            self.hud(fps);
 
             // SCENE
 
@@ -336,26 +470,27 @@ impl eframe::App for Mumper {
                 ui.available_size(), // All remaining space
                 Sense::click(),
             );
-
             let rect = response.rect;
-            self.viewport = rect;
-            self.viewport_painter = painter;
-
-            // Border
-            self.viewport_painter.rect_stroke(
-                rect,
-                5.0,
-                egui::Stroke::new(2.0, egui::Color32::GREEN),
-                egui::StrokeKind::Middle,
-            );
 
             // Inputs Handling
             ui.input(|input_state: &InputState| {
                 self.input_handling(response, input_state);
             });
 
-            self.hud(fps);
-            self.render_frame();
+            let state = &mut self.state;
+
+            state.viewport = rect;
+            state.viewport_painter = painter;
+
+            // Border
+            state.viewport_painter.rect_stroke(
+                rect,
+                5.0,
+                egui::Stroke::new(2.0, egui::Color32::GREEN),
+                egui::StrokeKind::Middle,
+            );
+
+            state.render_frame();
         });
     }
 }

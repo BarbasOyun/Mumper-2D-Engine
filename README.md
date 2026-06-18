@@ -12,3 +12,6 @@ Mumper is a 2D Engine written in Rust using egui</br>
 -Learn 2D Physics from scratch</br>
 
 ## Progress
+
+![Mumper Art](assets/Mumper_Art.png)</br>
+![Mumper Camera](assets/Mumper_Camera.gif)</br>
