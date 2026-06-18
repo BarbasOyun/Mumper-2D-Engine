@@ -2,6 +2,7 @@
 mod gears;
 
 use eframe::{CreationContext, egui::*};
+use glam::Vec2;
 
 #[cfg(not(target_arch = "wasm32"))]
 
@@ -66,6 +67,10 @@ fn main() {
     });
 }
 
+struct EngineState {}
+
+struct Settings {}
+
 struct Mumper {
     viewport: Rect,
     viewport_painter: Painter,
@@ -76,12 +81,15 @@ struct Mumper {
     // TODO : Add radius limits
     stroke_color: Color32,
     stroke_width: f32,
+    camera_sensitivity: f32,
+    zoom_sensitivity: f32,
+    min_ppm: i16,
+    max_ppm: i16,
     // State
-    // world_vector_basis: Vec2
-    ppm: u16, // Piwels Per Meter
+    ppm: i16, // Pixel Per Meter = Zoom value
     camera_position: Vec2,
-    camera_size_x: u16,
-    camera_size_y: u16,
+    camera_size_x: f32,
+    camera_size_y: f32,
     // Objects Data
     circles_position: Vec<glam::Vec2>,
     circles_points: Vec<Vec<glam::Vec2>>,
@@ -91,9 +99,9 @@ struct Mumper {
 impl Mumper {
     fn new(cc: &CreationContext) -> Self {
         let circles_position: Vec<glam::Vec2> = vec![
-            glam::Vec2::new(1.0, 1.0),
-            glam::Vec2::new(1.5, 1.0),
-            glam::Vec2::new(2.0, 1.0),
+            Vec2::new(1.0, 1.0),
+            Vec2::new(1.5, 1.0),
+            Vec2::new(2.0, 1.0),
         ];
 
         let circle_points1 = gears::circle_points(circles_position[0], 1.0, 20);
@@ -113,14 +121,18 @@ impl Mumper {
             smoothed_fps: 0.0,
             // Settings
             segments: 20,
-            radius: 100.0,
+            radius: 1.0,
             stroke_color: Color32::RED,
             stroke_width: 2.0,
+            camera_sensitivity: 0.001,
+            zoom_sensitivity: 0.3,
+            min_ppm: 10,
+            max_ppm: 1000,
             // State
             ppm: 100,
             camera_position: Vec2::ZERO,
-            camera_size_x: 3,
-            camera_size_y: 3,
+            camera_size_x: 4.0,
+            camera_size_y: 4.0,
             circles_position,
             circles_points,
             circles_strokes,
@@ -129,7 +141,7 @@ impl Mumper {
 
     // SCENE
 
-    fn create_circle(&mut self, position: Vec2, radius: f32, segments: u16, stroke: Stroke) {
+    fn create_circle(&mut self, position: glam::Vec2, radius: f32, segments: u16, stroke: Stroke) {
         let circle_points = gears::circle_points(position, radius, segments);
 
         self.circles_position.push(position);
@@ -145,20 +157,39 @@ impl Mumper {
 
     // RENDERING
 
-    fn camera_mode() {
-        todo!()
-        // 1] Viewport = Camera view
-        // let clip_space = (camera.x * -1 + object.position.x) * ppm
+    // world_to_screen :
+    // 1] Viewport = Camera view
+    // let clip_space = (camera.x * -1 + object.position.x) * ppm
 
+    // 2] Camera view -> Viewport
+    // 1) world_to_screen
+    // let camera_left = camera_position - camera_size_x / 2;
+    // let object_viewport_position_x = (-1 * camera_left + world_pos.x) / camera_size_x;
+    fn world_to_screen(&self, world_pos: glam::Vec2) -> Pos2 {
         // 2] Camera view -> Viewport
-        // 1) object_viewport_position_x :
-        // let camera_left = camera_position - camera_size_x / 2;
-        // let object_viewport_position_x = (abs(camera_left) + object.position.x) / camera_size_x;
+        let camera_left = self.camera_position.x - self.camera_size_x / 2.0;
+        let camera_bot = self.camera_position.y - self.camera_size_y / 2.0;
 
-        // 2) object_screen_size * viewport.aspect_ratio();
+        let fulcrum_x = (-1.0 * camera_left + world_pos.x) / self.camera_size_x;
+        let fulcrum_y = 1.0 - (-1.0 * camera_bot + world_pos.y) / self.camera_size_y; // y inverted = ui
+
+        let screen_pos_x = fulcrum_x * self.viewport.width();
+        let screen_pos_y = fulcrum_y * self.viewport.height();
+
+        let screen_pos = Pos2::new(screen_pos_x, screen_pos_y);
+        return screen_pos;
     }
 
-    fn world_to_screen() {}
+    fn screen_to_world(&self, screen_pos: Pos2) -> Vec2 {
+        let camera_left = self.camera_position.x - self.camera_size_x / 2.0;
+        let camera_bot = self.camera_position.y - self.camera_size_y / 2.0;
+
+        let ppm = self.ppm as f32;
+        let world_pos_x = camera_left + screen_pos.x / ppm;
+        let world_pos_y = camera_bot + (self.viewport.height() - screen_pos.y) / ppm; // y inverted
+
+        return Vec2::new(world_pos_x, world_pos_y);
+    }
 
     fn render_frame(&self) {
         // TODO : Check if object is in frame
@@ -174,8 +205,8 @@ impl Mumper {
         for index in 0..circle_points.len() {
             let end_index = (index + 1) % circle_points.len();
 
-            let start_pos = Pos2::new(circle_points[index].x, circle_points[index].y);
-            let end_pos = Pos2::new(circle_points[end_index].x, circle_points[end_index].y);
+            let start_pos = self.world_to_screen(circle_points[index]);
+            let end_pos = self.world_to_screen(circle_points[end_index]);
 
             // draw_edge
             self.viewport_painter
@@ -190,7 +221,7 @@ impl Mumper {
             ui.label("Segments :");
             ui.add(egui::Slider::new(&mut self.segments, 3..=100));
             ui.label("Radius :");
-            ui.add(egui::Slider::new(&mut self.radius, 50.0..=300.0));
+            ui.add(egui::Slider::new(&mut self.radius, 0.1..=10.0));
         });
 
         // Stroke Settings
@@ -205,12 +236,20 @@ impl Mumper {
     }
 
     fn ui_state(&mut self, ui: &mut Ui) {
-        if ui.button("Clear Circles").clicked() {
-            self.clear_circles();
-        }
+        ui.horizontal(|ui| {
+            if ui.button("Clear Circles").clicked() {
+                self.clear_circles();
+            }
+
+            ui.label("Zoom :");
+            ui.add(egui::Slider::new(
+                &mut self.ppm,
+                self.min_ppm..=self.max_ppm,
+            ));
+        });
     }
 
-    // Displayed on top of the 3D View
+    // Displayed on top of the viewport
     fn hud(&mut self, fps: f32) {
         let painter = &mut self.viewport_painter;
 
@@ -240,27 +279,36 @@ impl Mumper {
 
     fn input_handling(&mut self, response: Response, input_state: &InputState) {
         // 1] Input Detection
-        let left_mouse_released = input_state.pointer.primary_released();
-        let mut global_mouse_position = Pos2::new(0.0, 0.0);
+        let pointer_delta: egui::Vec2 = input_state.pointer.delta();
+        let lclick_released = input_state.pointer.primary_released();
+        let rclick_hold = input_state.pointer.secondary_down();
+        let mut global_pointer_position = Pos2::new(0.0, 0.0);
 
         if let Some(mouse_position) = input_state.pointer.hover_pos() {
-            global_mouse_position = mouse_position;
+            global_pointer_position = mouse_position;
         }
 
         // 2] Input Reaction
-        // Camera
         // Camera limits -> Depend on viewport size
-        self.camera_size_x = (self.viewport.width() / self.ppm as f32) as u16;
-        self.camera_size_y = (self.viewport.height() / self.ppm as f32) as u16;
+        self.camera_size_x = self.viewport.width() / self.ppm as f32;
+        self.camera_size_y = self.viewport.height() / self.ppm as f32;
 
-        // Change Radius with mousewheel
-        let delta = input_state.smooth_scroll_delta;
-        self.radius = (self.radius + delta.y).clamp(50.0, 300.0);
+        // Change zoom with mousewheel
+        let mousewheel_delta = input_state.smooth_scroll_delta * self.zoom_sensitivity;
+        self.ppm = (self.ppm + mousewheel_delta.y as i16).clamp(self.min_ppm, self.max_ppm); // Notch based zoom
 
-        // Create Circle on Click
-        if left_mouse_released && response.hovered() {
+        // RClick = Move Camera
+        if rclick_hold {
+            let sensivity = self.camera_sensitivity * (self.max_ppm / self.ppm) as f32;
+            self.camera_position.x -= pointer_delta.x * sensivity;
+            self.camera_position.y += pointer_delta.y * sensivity;
+        }
+
+        // LClick = Create Circle
+        if lclick_released && response.hovered() {
+            let world_pos = self.screen_to_world(global_pointer_position);
             self.create_circle(
-                vec2(global_mouse_position.x, global_mouse_position.y),
+                world_pos,
                 self.radius,
                 self.segments,
                 Stroke::new(self.stroke_width, self.stroke_color),
