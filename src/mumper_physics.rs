@@ -2,6 +2,7 @@ use glam::Vec2;
 
 // Shared between Rendering & Physic Threads
 pub struct MumperPhysics {
+    // TODO : Quadtree -> Separate Space
     // Objects Data
     // TODO : ECS
     // Smart IDs
@@ -94,6 +95,10 @@ impl MumperPhysics {
             self.edge_normals[i] = edge_normals;
 
             // 4] Collisions
+            if self.radiuses[i] == 0.0 {
+                continue;
+            }
+
             // Walls Collisions
             let square = &self.calculated_vertices[0];
             Self::wall_collisions(
@@ -106,72 +111,8 @@ impl MumperPhysics {
             );
 
             // Objects Collision
-            const SOLVER_ITERATIONS: usize = 6;
-            // 1] Collision Detection
-            let mut index_list: Vec<usize> = vec![]; // Indexes already captured
-
-            for j in 0..object_collisions2.len() {
-                if object_collisions2[j] == i {
-                    index_list.push(object_collisions1[j]);
-                }
-            }
-
-            // for each other object -> detect collision
-            for j in 0..self.positions.len() {
-                if j == i || index_list.contains(&j) {
-                    continue;
-                }
-
-                let other_object_pos = self.positions[j];
-                let direction = self.positions[i] - other_object_pos;
-                let distance = direction.length();
-                let distance_threshold = self.radiuses[i] + self.radiuses[j];
-
-                if distance <= distance_threshold {
-                    // Collision
-                    println!("Collision Detected");
-
-                    let penetration_depth = distance - self.radiuses[i];
-
-                    object_collisions1.push(i);
-                    object_collisions2.push(i);
-                    collisions_normals.push(direction.normalize());
-                    collisions_penetration_depth.push(penetration_depth);
-                }
-            }
+            self.objects_collision(i, &mut object_collisions1, &mut object_collisions2, &mut collisions_normals,  &mut collisions_penetration_depth);
         }
-
-        // 2] Collisions Solver
-        // for each collision
-        // for mut i in 0..object_collisions1.len() {
-        //     let mut next_index = (i + 1) % object_collisions1.len();
-
-        //     let mut collision_normals: Vec<Vec2> = vec![];
-        //     collision_normals.push(collision_normals[i]);
-
-        //     // every identical index are next to each other
-        //     while i == object_collisions1[next_index] {
-        //         collision_normals.push(collision_normals[next_index]);
-        //         i += 1; // Advance the for loop
-        //         next_index += 1;
-        //     }
-
-        //     // Add all normals
-        //     let mut sum_normals = Vec2::ZERO;
-
-        //     for j in 0..collision_normals.len() {
-        //         sum_normals += collision_normals[j];
-        //     }
-
-        //     let escape_direction = sum_normals.normalize() * -1.0; // reverse
-        //     let mut escape_scalar = 0.0;
-
-        //     for j in 0..collisions_penetration_depth.len() {
-        //         escape_scalar += collisions_penetration_depth[j];
-        //     }
-
-        //     self.positions[i] += escape_direction * escape_scalar;
-        // }
     }
 
     // Take an object and apply its transform -> called every frame
@@ -248,10 +189,6 @@ impl MumperPhysics {
         square_lines_thickness: &f32,
     ) {
         // Detection
-        if *radius == 0.0 {
-            return;
-        }
-
         let distance_threshold = square_lines_thickness + radius;
 
         // for each square edge -> check collision
@@ -279,20 +216,121 @@ impl MumperPhysics {
                 //     *position += collision_normal * penetration_depth;
                 // }
 
-                Self::bounce(collision_normal, penetration_depth, velocity, bounciness, position);
+                Self::bounce(
+                    collision_normal,
+                    penetration_depth,
+                    velocity,
+                    bounciness,
+                    position,
+                );
             }
         }
     }
 
     // make an objetc bounce from a normal
-    fn bounce(collision_normal: Vec2, penetration_depth: f32, velocity: &mut Vec2, bounciness: &f32, position: &mut Vec2) {
+    fn bounce(
+        collision_normal: Vec2,
+        penetration_depth: f32,
+        velocity: &mut Vec2,
+        bounciness: &f32,
+        position: &mut Vec2,
+    ) {
         let vel_along_normal = velocity.dot(collision_normal);
 
         if vel_along_normal < 0.0 {
-            let impulse_scalar = -(1.0 + bounciness) * vel_along_normal; // TODO : Multiply by other object speed -> walls/static speed = 1
+            let impulse_scalar = -(1.0 + bounciness) * vel_along_normal;
             *velocity += collision_normal * impulse_scalar;
 
             *position += collision_normal * penetration_depth;
+        }
+    }
+
+    fn objects_collision(&mut self, i: usize, object_collisions1: &mut Vec<usize>, object_collisions2: &mut Vec<usize>, collisions_normals: &mut Vec<Vec2>, collisions_penetration_depth: &mut Vec<f32>) {
+        // 1] Collision Detection
+        let mut ignore_list: Vec<usize> = vec![]; // Indexes already captured
+
+            for j in 0..object_collisions2.len() {
+                if object_collisions2[j] == i {
+                    ignore_list.push(object_collisions1[j]);
+                }
+            }
+
+            // for each other object -> detect collision
+            for j in 0..self.positions.len() {
+                if j == i || self.radiuses[j] == 0.0 || ignore_list.contains(&j) {
+                    continue;
+                }
+
+                let object2_pos = self.positions[j];
+                let direction = object2_pos - self.positions[i]; // direction from object1 -> object2
+                let distance = direction.length();
+                let distance_threshold = self.radiuses[i] + self.radiuses[j];
+
+                if distance <= distance_threshold {
+                    // Collision
+                    let penetration_depth = distance - self.radiuses[i];
+
+                    object_collisions1.push(i);
+                    object_collisions2.push(j);
+                    collisions_normals.push(direction.normalize());
+                    collisions_penetration_depth.push(penetration_depth);
+                }
+            }
+
+        // 2] Collisions Solver
+        const SOLVER_ITERATIONS: usize = 6;
+
+        for _iteration in 0..SOLVER_ITERATIONS {
+            for i in 0..object_collisions1.len() {
+                // inv_mass = invariant mass
+                let a_inv_mass = 1.0;
+                let b_inv_mass = 1.0;
+                let total_inv_mass = a_inv_mass + b_inv_mass;
+
+                let index1 = object_collisions1[i];
+                let index2 = object_collisions2[i];
+                let penetration_depth = collisions_penetration_depth[i];
+                let normal = collisions_normals[i];
+
+                // If both objects are unmovable
+                if total_inv_mass == 0.0 {
+                    continue;
+                }
+
+                // 1] Positional Correction
+                let percent = 0.05; // Resolve X% of the penetration per iteration
+                let slop = 0.01; // Allow 1 centimeter of penetration before fixing
+
+                let correction_magnitude =
+                    (penetration_depth - slop).max(0.0) / total_inv_mass * percent;
+                let correction_vector = normal * correction_magnitude;
+
+                // Separation
+                self.positions[index1] -= correction_vector * a_inv_mass;
+                self.positions[index2] += correction_vector * b_inv_mass;
+
+                // 2] Impulse Resolution
+                // Relative velocity
+                let rel_velocity =
+                    self.velocities[index2] - self.velocities[index1];
+
+                let vel_along_normal = rel_velocity.dot(normal);
+
+                // Do not resolve if velocities are already moving apart
+                if vel_along_normal < 0.0 {
+                    // Choose the lower bounciness between the two circles
+                    let restitution = self.bounciness[index1].min(self.bounciness[index2]);
+
+                    // Calculate impulse scalar
+                    let mut impulse_scalar = -(1.0 + restitution) * vel_along_normal;
+                    impulse_scalar /= total_inv_mass;
+
+                    // Apply impulse to each circle
+                    let impulse = normal * impulse_scalar;
+                    self.velocities[index1] -= impulse * a_inv_mass;
+                    self.velocities[index2] += impulse * b_inv_mass;
+                }
+            }
         }
     }
 
