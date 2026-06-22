@@ -1,5 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 mod gears;
+mod mumper_physics;
+
+use crate::mumper_physics::MumperPhysics;
 
 use eframe::{CreationContext, egui::*};
 use glam::Vec2;
@@ -76,14 +79,16 @@ struct Settings {
     // Camera
     camera_sensitivity: f32,
     zoom_sensitivity: f32,
-    min_ppm: i16,
-    max_ppm: i16,
+    min_ppm: f32,
+    max_ppm: f32,
     // Polygons
     segments: u16,
     radius: f32,
     stroke_color: Color32,
     stroke_width: f32,
-    polygon_speed: Vec2,
+    polygon_velocity: Vec2,
+    // Gizmo
+    is_drawing_normals: bool,
 }
 
 impl Settings {
@@ -92,155 +97,17 @@ impl Settings {
             // Camera
             camera_sensitivity: 1.0,
             zoom_sensitivity: 1.0,
-            min_ppm: 10,
-            max_ppm: 1000,
+            min_ppm: 10.0,
+            max_ppm: 1000.0,
             // Polygons
             segments: 20,
             radius: 1.0,
             stroke_color: Color32::RED,
             stroke_width: 2.0,
-            polygon_speed: Vec2::new(1.0, -10.0),
+            polygon_velocity: Vec2::new(1.0, 1.0),
+            // Gizmo
+            is_drawing_normals: false,
         };
-    }
-}
-
-// Shared between Rendering & Physic Threads
-struct MumperPhysics {
-    // Objects Data
-    // TODO : ECS
-    // Smart IDs
-    vertices: Vec<Vec<Vec2>>,
-    calculated_vertices: Vec<Vec<Vec2>>,
-    // edges_normals: Vec<Vec<Vec2>>
-    positions: Vec<Vec2>,
-    rotations: Vec<f32>, // 2D Object rotate only on Z axe
-    scales: Vec<Vec2>,
-    radiuses: Vec<f32>, // Circle Collider only TODO : Add Others collider shapes eg box
-    speeds: Vec<Vec2>,  // meters / sec
-    rotation_speeds: Vec<f32>,
-}
-
-impl MumperPhysics {
-    fn new(
-        vertices: Vec<Vec<Vec2>>,
-        positions: Vec<Vec2>,
-        rotations: Vec<f32>,
-        scales: Vec<Vec2>,
-        radiuses: Vec<f32>,
-        speeds: Vec<Vec2>,
-        rotation_speeds: Vec<f32>,
-    ) -> Self {
-        let mut calculated_vertices = vec![];
-
-        for _ in 0..vertices.len() {
-            calculated_vertices.push(vec![]);
-        }
-
-        return Self {
-            vertices,
-            calculated_vertices,
-            positions,
-            rotations,
-            scales,
-            radiuses,
-            speeds,
-            rotation_speeds,
-        };
-    }
-
-    // Physics update
-    fn tick(&mut self, dt: f32) {
-        // for each object
-        for i in 0..self.positions.len() {
-            // Apply Movement
-            // Position
-            let position = &mut self.positions[i];
-
-            // Speed
-            let speed = &mut self.speeds[i];
-            let speed_frame = *speed * dt;
-
-            position.x += speed_frame.x;
-            position.y += speed_frame.y;
-
-            // Gravity
-            // pos.y -= 9.81 * dt;
-
-            // Rotation
-            let rotation = &mut self.rotations[i];
-            *rotation += self.rotation_speeds[i] * dt;
-
-            // Scale
-            let scale = &mut self.scales[i];
-
-            // Collisions
-
-            // X Checks
-            let circle_left = position.x - self.radiuses[i];
-            let circle_right = position.x + self.radiuses[i];
-
-            if circle_left < -10.0 {
-                speed.x = -speed.x;
-                position.x = -10.0 + self.radiuses[i];
-            }
-
-            if circle_right > 10.0 {
-                speed.x = -speed.x;
-                position.x = 10.0 - self.radiuses[i];
-            }
-
-            // Y Checks
-            let circle_top = position.y + self.radiuses[i];
-            let circle_bot = position.y - self.radiuses[i];
-
-            if circle_bot < -10.0 {
-                speed.y = -speed.y;
-                position.y = -10.0 + self.radiuses[i];
-            }
-
-            if circle_top > 10.0 {
-                speed.y = -speed.y;
-                position.y = 10.0 - self.radiuses[i];
-            }
-
-            // Frame Image -> vertices * model matrix
-            let mut calculated_vertices = vec![];
-            let model_matrix =
-                glam::Mat3::from_scale_angle_translation(*scale, *rotation, *position);
-
-            // for each object's vertices
-            for j in 0..self.vertices[i].len() {
-                let vertex = self.vertices[i][j];
-                let homogeneous_vertex = vertex.extend(1.0);
-
-                let transformed_vertex_3d = model_matrix * homogeneous_vertex;
-
-                let world_position: Vec2 = transformed_vertex_3d.truncate();
-                calculated_vertices.push(world_position);
-            }
-
-            self.calculated_vertices[i] = calculated_vertices;
-        }
-    }
-
-    // Detect if a point collide with a line
-    // use dot product between line_normal & point
-    fn edge_collision(edge_normal: Vec2, edge_width: f32, point: Vec2) -> bool {
-        // TODO
-        // let point
-        let distance = edge_normal.dot(point);
-
-        return false;
-    }
-
-    fn get_edge_normal(vertex1: Vec2, vertex2: Vec2) -> Vec2 {
-        // TODO
-        let edge = Vec2::new(vertex2.x - vertex1.x, vertex2.y - vertex1.y);
-        // Clockwise -> Vec2(x, y) -> Vec2(-y, x)
-        // Counterclockwise -> Vec2(x, y) -> Vec2(y, −x)
-        let edge_normal = Vec2::new(-edge.y, edge.x);
-
-        return edge_normal;
     }
 }
 
@@ -250,7 +117,7 @@ struct EngineState {
     viewport_painter: Painter,
     smoothed_fps: f32,
     // World
-    ppm: i16, // Pixel Per Meter = Zoom value
+    ppm: f32, // Pixel Per Meter = Zoom value
     camera_position: Vec2,
     camera_size_x: f32,
     camera_size_y: f32,
@@ -262,15 +129,32 @@ struct EngineState {
     strokes: Vec<Stroke>,
 }
 
-// TODO : Create Physic & Rendering Threads
+// Scene
 impl EngineState {
     fn new(viewport: Rect, viewport_painter: Painter) -> Self {
-        let (vertices, positions, rotations, scales, radiuses, speeds, rotation_speeds, strokes) =
-            Self::default_polygons();
+        let (
+            radiuses,
+            vertices,
+            positions,
+            rotations,
+            scales,
+            velocities,
+            rotation_speeds,
+            bounciness,
+            strokes,
+        ) = Self::default_polygons();
 
         let physics = Arc::new(Mutex::new(MumperPhysics::new(
-            vertices, positions, rotations, scales, radiuses, speeds, rotation_speeds,
+            radiuses,
+            vertices,
+            positions,
+            rotations,
+            scales,
+            velocities,
+            rotation_speeds,
+            bounciness,
         )));
+        
         let is_paused = Arc::new(AtomicBool::new(false));
 
         let physics_thread = Arc::clone(&physics);
@@ -305,7 +189,7 @@ impl EngineState {
             viewport_painter,
             smoothed_fps: 0.0,
             // World
-            ppm: 100,
+            ppm: 100.0,
             camera_position: Vec2::ZERO,
             camera_size_x: 4.0,
             camera_size_y: 4.0,
@@ -360,32 +244,78 @@ impl EngineState {
         return Vec2::new(world_pos_x, world_pos_y);
     }
 
-    fn render_frame(&mut self) {
+    fn render_frame(&mut self, settings: &Settings) {
+        // Draw origin
+        // X
+        self.render_vector(
+            Vec2::ZERO,
+            Vec2::new(1.0, 0.0),
+            Stroke::new(1.0, egui::Color32::RED),
+        );
+        // Y
+        self.render_vector(
+            Vec2::ZERO,
+            Vec2::new(0.0, 1.0),
+            Stroke::new(1.0, egui::Color32::GREEN),
+        );
+
+        // Get physics data
         {
             let physics = self.physics.lock().unwrap();
             self.calculated_vertices = physics.calculated_vertices.clone();
             self.positions = physics.positions.clone();
         };
 
-        // Draw Polygons
-        for i in 0..self.positions.len() {
-            self.draw_polygon(
-                self.positions[i],
-                &self.calculated_vertices[i],
-                self.strokes[i],
-            );
+        if self.calculated_vertices.len() == 0 || self.calculated_vertices[0].len() == 0 {
+            return;
+        }
+
+        // Draw normals
+        if settings.is_drawing_normals {
+            for i in 0..self.calculated_vertices.len() {
+                let vertices = &self.calculated_vertices[i];
+
+                // for each object's vertices
+                for j in 0..vertices.len() {
+                    if i >= vertices.len() {
+                        continue;
+                    }
+
+                    let vertex: Vec2 = vertices[j];
+
+                    // Edge normals
+                    let next_index = (j + 1) % vertices.len();
+                    let next_vertex = vertices[next_index];
+
+                    let edge_vector = next_vertex - vertex;
+                    let edge_normal = MumperPhysics::vector_normal(edge_vector);
+
+                    let normal_pos = gears::get_average_point(vertex, next_vertex);
+
+                    self.render_vector(
+                        normal_pos,
+                        edge_normal,
+                        Stroke::new(1.0, egui::Color32::LIGHT_BLUE),
+                    );
+                }
+            }
+        }
+
+        // Render Polygons
+        for i in 0..self.calculated_vertices.len() {
+            self.render_polygon(&self.calculated_vertices[i], self.strokes[i]);
         }
     }
 
     // Draw an edge between each vertices
-    fn draw_polygon(&self, positon: Vec2, vertices: &Vec<glam::Vec2>, stroke: Stroke) {
+    fn render_polygon(&self, vertices: &Vec<glam::Vec2>, stroke: Stroke) {
         for index in 0..vertices.len() {
             let end_index = (index + 1) % vertices.len();
 
             // Rotation -> rad
 
-            let start_world_pos = positon + vertices[index];
-            let end_world_pos = positon + vertices[end_index];
+            let start_world_pos = vertices[index];
+            let end_world_pos = vertices[end_index];
 
             let start_pos = self.world_to_screen(start_world_pos);
             let end_pos = self.world_to_screen(end_world_pos);
@@ -396,23 +326,37 @@ impl EngineState {
         }
     }
 
-    fn draw_vector() {
+    fn render_vector(&self, origin: Vec2, vector: Vec2, stroke: Stroke) {
         // TODO
+        let start_pos = self.world_to_screen(origin);
+        let end_pos = self.world_to_screen(origin + vector);
+
+        // Draw segment
+        self.viewport_painter
+            .line_segment([start_pos, end_pos], stroke);
+
+        // Draw vector head
+        let vector_head = Rect::from_center_size(end_pos, vec2(10.0, 10.0));
+        self.viewport_painter
+            .rect_filled(vector_head, 0.0, stroke.color);
     }
 
     // SCENE
 
     // Default Objects = 1 Square + 3 Circles
     fn default_polygons() -> (
+        Vec<f32>,
         Vec<Vec<Vec2>>,
         Vec<Vec2>,
         Vec<f32>,
         Vec<Vec2>,
-        Vec<f32>,
         Vec<Vec2>,
+        Vec<f32>,
         Vec<f32>,
         Vec<Stroke>,
     ) {
+        let radiuses: Vec<f32> = vec![0.0, 1.0, 1.5, 2.0];
+
         // Vertices
         // Square
         let square_vertices: Vec<Vec2> = vec![
@@ -422,9 +366,9 @@ impl EngineState {
             Vec2::new(-10.0, -10.0),
         ];
 
-        let circle_vertices1 = gears::circle_vertices(1.0, 20);
-        let circle_vertices2 = gears::circle_vertices(1.5, 20);
-        let circle_vertices3 = gears::circle_vertices(2.0, 20);
+        let circle_vertices1 = gears::circle_vertices(radiuses[1], 20);
+        let circle_vertices2 = gears::circle_vertices(radiuses[2], 20);
+        let circle_vertices3 = gears::circle_vertices(radiuses[3], 20);
 
         let vertices: Vec<Vec<Vec2>> = vec![
             square_vertices,
@@ -444,22 +388,19 @@ impl EngineState {
         let rotations: Vec<f32> = vec![0.785, 0.0, 0.0, 0.0];
         let scales: Vec<Vec2> = vec![Vec2::ONE, Vec2::ONE, Vec2::ONE, Vec2::ONE];
 
-        let radiuses: Vec<f32> = vec![0.0, 1.0, 1.5, 2.0];
-
-        let speeds: Vec<Vec2> = vec![
+        let velocities: Vec<Vec2> = vec![
             Vec2::ZERO,
             Vec2::new(1.0, 0.0),
             Vec2::new(1.0, 1.0),
             Vec2::new(-1.0, -1.0),
         ];
 
-        let rotation_speeds: Vec<f32> = vec![
-            0.0,
-            1.0,
-            -1.0,
-            0.5,
-        ];
+        let rotation_speeds: Vec<f32> = vec![0.0, 1.0, -1.5, 0.5];
 
+        // Rigid body
+        let bounciness: Vec<f32> = vec![0.0, 1.0, 0.9, 0.5];
+
+        // Rendering
         let strokes: Vec<Stroke> = vec![
             Stroke::new(5.0, Color32::LIGHT_YELLOW),
             Stroke::new(2.0, Color32::RED),
@@ -468,22 +409,42 @@ impl EngineState {
         ];
 
         return (
-            vertices, positions, rotations, scales, radiuses, speeds, rotation_speeds, strokes,
+            radiuses,
+            vertices,
+            positions,
+            rotations,
+            scales,
+            velocities,
+            rotation_speeds,
+            bounciness,
+            strokes,
         );
     }
 
-    fn create_polygon(&mut self, position: glam::Vec2, radius: f32, segments: u16, stroke: Stroke) {
+    fn create_polygon(
+        &mut self,
+        position: glam::Vec2,
+        velocity: Vec2,
+        radius: f32,
+        segments: u16,
+        stroke: Stroke,
+    ) {
+        // println!("Create Polygon at : {position}");
+
         let vertices = gears::circle_vertices(radius, segments);
 
         {
             let mut physics = self.physics.lock().unwrap();
+            physics.radiuses.push(radius);
             physics.vertices.push(vertices);
             physics.calculated_vertices.push(vec![]);
+            physics.edge_normals.push(vec![]);
             physics.positions.push(position);
             physics.rotations.push(0.0);
             physics.scales.push(Vec2::ONE);
-            physics.radiuses.push(radius);
-            physics.speeds.push(Vec2::new(1.0, -10.0)); // TODO : Add Speed Setting
+            physics.velocities.push(velocity);
+            physics.bounciness.push(1.0);
+            physics.rotation_speeds.push(-1.0);
         };
 
         self.strokes.push(stroke);
@@ -522,21 +483,47 @@ impl Mumper {
     fn ui_settings(&mut self, ui: &mut Ui) {
         let settings = &mut self.settings;
 
+        // Polygon Creation Settings
         ui.horizontal(|ui| {
-            ui.label("Segments :");
+            // Shape
+            ui.label("Polygon: ");
+            ui.label("Segments");
             ui.add(egui::Slider::new(&mut settings.segments, 3..=100));
-            ui.label("Radius :");
+            ui.label("Radius");
             ui.add(egui::Slider::new(&mut settings.radius, 0.1..=10.0));
+        });
+
+        // Rigid body
+        ui.horizontal(|ui| {
+            ui.label("Rigid body: ");
+            ui.label("Velocity ");
+            ui.label("X");
+            ui.add(egui::Slider::new(
+                &mut settings.polygon_velocity.x,
+                -10.0..=10.0,
+            ));
+            ui.label("Y");
+            ui.add(egui::Slider::new(
+                &mut settings.polygon_velocity.y,
+                -10.0..=10.0,
+            ));
         });
 
         // Stroke Settings
         ui.horizontal(|ui| {
-            ui.label("Stroke Width :");
+            ui.label("Stroke: ");
+            ui.label("Width:");
             ui.add(egui::Slider::new(&mut settings.stroke_width, 1.0..=10.0));
 
-            let color_label = ui.label("Stroke Color :");
+            let color_label = ui.label("Color:");
             ui.color_edit_button_srgba(&mut settings.stroke_color)
                 .labelled_by(color_label.id);
+        });
+
+        // Rendering Settings
+        ui.horizontal(|ui: &mut Ui| {
+            ui.label("Gizmo: ");
+            ui.checkbox(&mut settings.is_drawing_normals, "Draw Normals");
         });
     }
 
@@ -605,9 +592,13 @@ impl Mumper {
         state.camera_size_y = state.viewport.height() / ppm;
 
         // Mousewheel = Zoom
-        let scroll_delta =
-            input_state.smooth_scroll_delta.y * settings.zoom_sensitivity * ppm * 0.004;
-        state.ppm = (state.ppm + scroll_delta as i16).clamp(settings.min_ppm, settings.max_ppm); // Notch based zoom
+        let mut scroll_delta =
+            input_state.smooth_scroll_delta.y * settings.zoom_sensitivity * ppm * 0.003; // Notch based zoom
+
+        if scroll_delta != 0.0 {
+            gears::reverse_clamp(&mut scroll_delta, -0.1, 0.1);
+            state.ppm = (state.ppm + scroll_delta).clamp(settings.min_ppm, settings.max_ppm);
+        }
 
         // RClick = Move Camera
         if rclick_hold {
@@ -633,11 +624,12 @@ impl Mumper {
         let settings = &mut self.settings;
         let state = &mut self.state;
 
-        // LClick = Create Circle
+        // LClick = Create Polygon
         if lclick_released && response.hovered() {
             let world_pos = state.screen_to_world(global_pointer_position);
             state.create_polygon(
                 world_pos,
+                settings.polygon_velocity,
                 settings.radius,
                 settings.segments,
                 Stroke::new(settings.stroke_width, settings.stroke_color),
@@ -686,7 +678,7 @@ impl eframe::App for Mumper {
                 egui::StrokeKind::Middle,
             );
 
-            state.render_frame();
+            state.render_frame(&self.settings);
         });
     }
 }
