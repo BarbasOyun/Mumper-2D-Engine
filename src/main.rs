@@ -6,14 +6,12 @@ use crate::mumper_physics::MumperPhysics;
 
 use eframe::{CreationContext, egui::*};
 use glam::Vec2;
-// Multi-threading -> use tokio for web browser support?
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::thread; // only viable for desktop
 use std::time::{Duration, Instant};
 
 #[cfg(not(target_arch = "wasm32"))]
-
 fn main() -> eframe::Result {
     // env_logger::init(); // GPU Logs
 
@@ -54,7 +52,7 @@ fn main() {
             .start(
                 canvas,
                 web_options,
-                Box::new(|cc| Ok(Box::new(Mumper::new()))),
+                Box::new(|cc| Ok(Box::new(Mumper::new(cc)))),
             )
             .await;
 
@@ -154,13 +152,14 @@ impl EngineState {
             rotation_speeds,
             bounciness,
         )));
-        
+
         let is_paused = Arc::new(AtomicBool::new(false));
 
         let physics_thread = Arc::clone(&physics);
         let is_paused_thread = Arc::clone(&is_paused);
 
         // Start Physic Thread
+        #[cfg(not(target_arch = "wasm32"))] // Spawn Thread on Desktop only
         thread::spawn(move || {
             let mut last_tick = Instant::now();
 
@@ -245,19 +244,7 @@ impl EngineState {
     }
 
     fn render_frame(&mut self, settings: &Settings) {
-        // Draw origin
-        // X
-        self.render_vector(
-            Vec2::ZERO,
-            Vec2::new(1.0, 0.0),
-            Stroke::new(1.0, egui::Color32::RED),
-        );
-        // Y
-        self.render_vector(
-            Vec2::ZERO,
-            Vec2::new(0.0, 1.0),
-            Stroke::new(1.0, egui::Color32::GREEN),
-        );
+        self.draw_origin();
 
         // Get physics data
         {
@@ -272,33 +259,7 @@ impl EngineState {
 
         // Draw normals
         if settings.is_drawing_normals {
-            for i in 0..self.calculated_vertices.len() {
-                let vertices = &self.calculated_vertices[i];
-
-                // for each object's vertices
-                for j in 0..vertices.len() {
-                    if i >= vertices.len() {
-                        continue;
-                    }
-
-                    let vertex: Vec2 = vertices[j];
-
-                    // Edge normals
-                    let next_index = (j + 1) % vertices.len();
-                    let next_vertex = vertices[next_index];
-
-                    let edge_vector = next_vertex - vertex;
-                    let edge_normal = MumperPhysics::vector_normal(edge_vector);
-
-                    let normal_pos = gears::get_average_point(vertex, next_vertex);
-
-                    self.render_vector(
-                        normal_pos,
-                        edge_normal,
-                        Stroke::new(1.0, egui::Color32::LIGHT_BLUE),
-                    );
-                }
-            }
+            self.draw_normals();
         }
 
         // Render Polygons
@@ -339,6 +300,51 @@ impl EngineState {
         let vector_head = Rect::from_center_size(end_pos, vec2(10.0, 10.0));
         self.viewport_painter
             .rect_filled(vector_head, 0.0, stroke.color);
+    }
+
+    fn draw_origin(&self) {
+        // X
+        self.render_vector(
+            Vec2::ZERO,
+            Vec2::new(1.0, 0.0),
+            Stroke::new(1.0, egui::Color32::RED),
+        );
+        // Y
+        self.render_vector(
+            Vec2::ZERO,
+            Vec2::new(0.0, 1.0),
+            Stroke::new(1.0, egui::Color32::GREEN),
+        );
+    }
+
+    fn draw_normals(&self) {
+        for i in 0..self.calculated_vertices.len() {
+            let vertices = &self.calculated_vertices[i];
+
+            // for each object's vertices
+            for j in 0..vertices.len() {
+                if i >= vertices.len() {
+                    continue;
+                }
+
+                let vertex: Vec2 = vertices[j];
+
+                // Edge normals
+                let next_index = (j + 1) % vertices.len();
+                let next_vertex = vertices[next_index];
+
+                let edge_vector = next_vertex - vertex;
+                let edge_normal = MumperPhysics::vector_normal(edge_vector);
+
+                let normal_pos = gears::get_average_point(vertex, next_vertex);
+
+                self.render_vector(
+                    normal_pos,
+                    edge_normal,
+                    Stroke::new(1.0, egui::Color32::LIGHT_BLUE),
+                );
+            }
+        }
     }
 
     // SCENE
@@ -677,6 +683,16 @@ impl eframe::App for Mumper {
                 egui::Stroke::new(2.0, egui::Color32::GREEN),
                 egui::StrokeKind::Middle,
             );
+
+            // Web Physics
+            #[cfg(target_arch = "wasm32")]
+            {
+                let mut physics = state.physics.lock().unwrap();
+
+                if !state.is_paused.load(std::sync::atomic::Ordering::Relaxed) {
+                    physics.tick(dt);
+                }
+            }
 
             state.render_frame(&self.settings);
         });
