@@ -1,10 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
-mod gears;
-mod mumper_physics;
-
-use crate::mumper_physics::MumperPhysics;
+use mumper::MumperPhysics;
+use mumper::gears;
 
 use eframe::{CreationContext, egui::*};
+
 use glam::Vec2;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -13,17 +12,15 @@ use std::time::{Duration, Instant};
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
-    // env_logger::init(); // GPU Logs
-
     let options = eframe::NativeOptions {
         viewport: ViewportBuilder::default().with_inner_size([800.0, 800.0]),
         ..Default::default()
     };
 
     eframe::run_native(
-        "Mumper - 2D Engine",
+        "MumperDemo - 2D Engine",
         options,
-        Box::new(|_cc| Ok(Box::new(Mumper::new(_cc)))),
+        Box::new(|_cc| Ok(Box::new(MumperDemo::new(_cc)))),
     )
 }
 
@@ -73,18 +70,300 @@ fn main() {
     });
 }
 
-struct Settings {
-    // Camera
-    camera_sensitivity: f32,
-    zoom_sensitivity: f32,
-    min_ppm: f32,
-    max_ppm: f32,
-    // Polygons
+struct DemoSettings {
+    // Polygon Drawing Settings
     segments: u16,
     radius: f32,
     stroke_color: Color32,
     stroke_width: f32,
     polygon_velocity: Vec2,
+}
+
+impl DemoSettings {
+    fn new() -> Self {
+        return Self {
+            // Polygons
+            segments: 20,
+            radius: 1.0,
+            stroke_color: Color32::RED,
+            stroke_width: 2.0,
+            polygon_velocity: Vec2::new(1.0, 1.0),
+        };
+    }
+}
+
+struct MumperDemo {
+    // Mumper Implementation
+    mumper: Mumper,
+    // Custom App Data
+    settings: DemoSettings,
+}
+
+impl MumperDemo {
+    fn new(cc: &CreationContext) -> Self {
+        let settings = DemoSettings::new();
+        let mut mumper: Mumper = Mumper::new(cc);
+
+        Self::default_scene(&mut mumper.state);
+
+        return Self { mumper, settings };
+    }
+
+    fn reset_settings(&mut self) {
+        self.mumper.reset_settings();
+        self.settings = DemoSettings::new();
+    }
+
+    fn reset_scene(&mut self) {
+        self.mumper.reset_scene();
+        Self::default_scene(&mut self.mumper.state);
+    }
+
+    fn input_handling(&mut self, response: Response, input_state: &InputState) {
+        self.mumper.camera_controls(input_state);
+
+        // Input Detection
+        let lclick_released = input_state.pointer.primary_released();
+        let mut global_pointer_position = Pos2::new(0.0, 0.0);
+
+        if let Some(mouse_position) = input_state.pointer.hover_pos() {
+            global_pointer_position = mouse_position;
+        }
+
+        // Input Reaction
+        let settings = &mut self.settings;
+        let state = &mut self.mumper.state;
+
+        // LClick = Create Polygon
+        if lclick_released && response.hovered() {
+            let world_pos = state.screen_to_world(global_pointer_position);
+
+            let radius = settings.radius;
+            let segments = settings.segments;
+            let vertices = gears::circle_vertices(radius, segments);
+
+            state.create_shape(
+                vertices,
+                radius,
+                world_pos,
+                0.0,
+                Vec2::ONE,
+                settings.polygon_velocity,
+                -1.0,
+                1.0,
+                Stroke::new(settings.stroke_width, settings.stroke_color),
+            );
+        }
+    }
+
+    // UI COMPONENTS
+
+    pub fn ui_settings(&mut self, ui: &mut Ui) {
+        let settings = &mut self.settings;
+        let mumper_settings = &mut self.mumper.settings;
+
+        // Polygon Creation Settings
+        ui.horizontal(|ui| {
+            // Shape
+            ui.label("Polygon: ");
+            ui.label("Segments");
+            ui.add(egui::Slider::new(&mut settings.segments, 3..=100));
+            ui.label("Radius");
+            ui.add(egui::Slider::new(&mut settings.radius, 0.1..=10.0));
+        });
+
+        // Rigid body
+        ui.horizontal(|ui| {
+            ui.label("Rigid body: ");
+            ui.label("Velocity ");
+            ui.label("X");
+            ui.add(egui::Slider::new(
+                &mut settings.polygon_velocity.x,
+                -10.0..=10.0,
+            ));
+            ui.label("Y");
+            ui.add(egui::Slider::new(
+                &mut settings.polygon_velocity.y,
+                -10.0..=10.0,
+            ));
+        });
+
+        // Stroke Settings
+        ui.horizontal(|ui| {
+            ui.label("Stroke: ");
+            ui.label("Width:");
+            ui.add(egui::Slider::new(&mut settings.stroke_width, 1.0..=10.0));
+
+            let color_label = ui.label("Color:");
+            ui.color_edit_button_srgba(&mut settings.stroke_color)
+                .labelled_by(color_label.id);
+        });
+
+        // Rendering Settings
+        ui.horizontal(|ui: &mut Ui| {
+            ui.label("Gizmo: ");
+            ui.checkbox(&mut mumper_settings.is_drawing_normals, "Draw Normals");
+        });
+    }
+
+    pub fn ui_state(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            if ui.button("Reset Scene").clicked() {
+                self.reset_scene();
+            }
+
+            let mumper_settings = &mut self.mumper.settings;
+            let state = &mut self.mumper.state;
+
+            ui.label("Zoom :");
+            ui.add(egui::Slider::new(
+                &mut state.ppm,
+                mumper_settings.min_ppm..=mumper_settings.max_ppm,
+            ));
+
+            let mut local_pause = state.is_paused.load(Ordering::Relaxed);
+
+            if ui.checkbox(&mut local_pause, "Pause").changed() {
+                state.is_paused.store(local_pause, Ordering::Relaxed);
+            }
+        });
+    }
+
+    fn default_scene(state: &mut MumperState) {
+        // Default Scene
+        let (
+            radiuses,
+            vertices,
+            positions,
+            rotations,
+            scales,
+            velocities,
+            rotation_speeds,
+            bounciness,
+            strokes,
+        ) = Self::default_polygons();
+
+        for i in 0..radiuses.len() {
+            state.create_shape(
+                vertices[i].clone(),
+                radiuses[i],
+                positions[i],
+                rotations[i],
+                scales[i],
+                velocities[i],
+                rotation_speeds[i],
+                bounciness[i],
+                strokes[i],
+            );
+        }
+    }
+
+    // Default Scene = 1 Square + 3 Circles
+    fn default_polygons() -> (
+        Vec<f32>,
+        Vec<Vec<Vec2>>,
+        Vec<Vec2>,
+        Vec<f32>,
+        Vec<Vec2>,
+        Vec<Vec2>,
+        Vec<f32>,
+        Vec<f32>,
+        Vec<Stroke>,
+    ) {
+        let radiuses: Vec<f32> = vec![0.0, 1.0, 1.5, 2.0];
+
+        // Vertices
+        // Square
+        let square_vertices: Vec<Vec2> = vec![
+            Vec2::new(10.0, -10.0),
+            Vec2::new(10.0, 10.0),
+            Vec2::new(-10.0, 10.0),
+            Vec2::new(-10.0, -10.0),
+        ];
+
+        let circle_vertices1 = gears::circle_vertices(radiuses[1], 20);
+        let circle_vertices2 = gears::circle_vertices(radiuses[2], 20);
+        let circle_vertices3 = gears::circle_vertices(radiuses[3], 20);
+
+        let vertices: Vec<Vec<Vec2>> = vec![
+            square_vertices,
+            circle_vertices1,
+            circle_vertices2,
+            circle_vertices3,
+        ];
+
+        // Transforms
+        let positions: Vec<Vec2> = vec![
+            Vec2::ZERO,
+            Vec2::new(1.0, 1.0),
+            Vec2::new(1.5, 1.0),
+            Vec2::new(2.0, 1.0),
+        ];
+
+        let rotations: Vec<f32> = vec![0.785, 0.0, 0.0, 0.0];
+        let scales: Vec<Vec2> = vec![Vec2::ONE, Vec2::ONE, Vec2::ONE, Vec2::ONE];
+
+        let velocities: Vec<Vec2> = vec![
+            Vec2::ZERO,
+            Vec2::new(1.0, 0.0),
+            Vec2::new(1.0, 1.0),
+            Vec2::new(-1.0, -1.0),
+        ];
+
+        let rotation_speeds: Vec<f32> = vec![0.0, 1.0, -1.5, 0.5];
+
+        // Rigid body
+        let bounciness: Vec<f32> = vec![0.0, 1.0, 0.9, 0.5];
+
+        // Rendering
+        let strokes: Vec<Stroke> = vec![
+            Stroke::new(5.0, Color32::LIGHT_YELLOW),
+            Stroke::new(2.0, Color32::RED),
+            Stroke::new(2.0, Color32::GREEN),
+            Stroke::new(2.0, Color32::BLUE),
+        ];
+
+        return (
+            radiuses,
+            vertices,
+            positions,
+            rotations,
+            scales,
+            velocities,
+            rotation_speeds,
+            bounciness,
+            strokes,
+        );
+    }
+}
+
+impl eframe::App for MumperDemo {
+    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            let (dt, fps) = Mumper::update(ui);
+
+            // Ui
+            self.ui_settings(ui);
+            self.ui_state(ui);
+            self.mumper.hud(fps);
+
+            // Mumper Rendering
+            let response = self.mumper.rendering(ui);
+
+            // Inputs
+            ui.input(|input_state: &InputState| {
+                self.input_handling(response, input_state);
+            });
+        });
+    }
+}
+
+pub struct Settings {
+    // Camera
+    camera_sensitivity: f32,
+    zoom_sensitivity: f32,
+    min_ppm: f32,
+    max_ppm: f32,
     // Gizmo
     is_drawing_normals: bool,
 }
@@ -97,19 +376,13 @@ impl Settings {
             zoom_sensitivity: 1.0,
             min_ppm: 10.0,
             max_ppm: 1000.0,
-            // Polygons
-            segments: 20,
-            radius: 1.0,
-            stroke_color: Color32::RED,
-            stroke_width: 2.0,
-            polygon_velocity: Vec2::new(1.0, 1.0),
             // Gizmo
             is_drawing_normals: false,
         };
     }
 }
 
-struct EngineState {
+pub struct MumperState {
     // View
     viewport: Rect,
     viewport_painter: Painter,
@@ -127,30 +400,18 @@ struct EngineState {
     strokes: Vec<Stroke>,
 }
 
-// Scene
-impl EngineState {
+// Scene or EngineState
+impl MumperState {
     fn new(viewport: Rect, viewport_painter: Painter) -> Self {
-        let (
-            radiuses,
-            vertices,
-            positions,
-            rotations,
-            scales,
-            velocities,
-            rotation_speeds,
-            bounciness,
-            strokes,
-        ) = Self::default_polygons();
-
         let physics = Arc::new(Mutex::new(MumperPhysics::new(
-            radiuses,
-            vertices,
-            positions,
-            rotations,
-            scales,
-            velocities,
-            rotation_speeds,
-            bounciness,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         )));
 
         let is_paused = Arc::new(AtomicBool::new(false));
@@ -197,7 +458,7 @@ impl EngineState {
             // Objects Rendering
             positions: vec![],
             calculated_vertices: vec![],
-            strokes,
+            strokes: vec![],
         };
     }
 
@@ -349,108 +610,37 @@ impl EngineState {
 
     // SCENE
 
-    // Default Objects = 1 Square + 3 Circles
-    fn default_polygons() -> (
-        Vec<f32>,
-        Vec<Vec<Vec2>>,
-        Vec<Vec2>,
-        Vec<f32>,
-        Vec<Vec2>,
-        Vec<Vec2>,
-        Vec<f32>,
-        Vec<f32>,
-        Vec<Stroke>,
-    ) {
-        let radiuses: Vec<f32> = vec![0.0, 1.0, 1.5, 2.0];
-
-        // Vertices
-        // Square
-        let square_vertices: Vec<Vec2> = vec![
-            Vec2::new(10.0, -10.0),
-            Vec2::new(10.0, 10.0),
-            Vec2::new(-10.0, 10.0),
-            Vec2::new(-10.0, -10.0),
-        ];
-
-        let circle_vertices1 = gears::circle_vertices(radiuses[1], 20);
-        let circle_vertices2 = gears::circle_vertices(radiuses[2], 20);
-        let circle_vertices3 = gears::circle_vertices(radiuses[3], 20);
-
-        let vertices: Vec<Vec<Vec2>> = vec![
-            square_vertices,
-            circle_vertices1,
-            circle_vertices2,
-            circle_vertices3,
-        ];
-
-        // Transforms
-        let positions: Vec<Vec2> = vec![
-            Vec2::ZERO,
-            Vec2::new(1.0, 1.0),
-            Vec2::new(1.5, 1.0),
-            Vec2::new(2.0, 1.0),
-        ];
-
-        let rotations: Vec<f32> = vec![0.785, 0.0, 0.0, 0.0];
-        let scales: Vec<Vec2> = vec![Vec2::ONE, Vec2::ONE, Vec2::ONE, Vec2::ONE];
-
-        let velocities: Vec<Vec2> = vec![
-            Vec2::ZERO,
-            Vec2::new(1.0, 0.0),
-            Vec2::new(1.0, 1.0),
-            Vec2::new(-1.0, -1.0),
-        ];
-
-        let rotation_speeds: Vec<f32> = vec![0.0, 1.0, -1.5, 0.5];
-
-        // Rigid body
-        let bounciness: Vec<f32> = vec![0.0, 1.0, 0.9, 0.5];
-
-        // Rendering
-        let strokes: Vec<Stroke> = vec![
-            Stroke::new(5.0, Color32::LIGHT_YELLOW),
-            Stroke::new(2.0, Color32::RED),
-            Stroke::new(2.0, Color32::GREEN),
-            Stroke::new(2.0, Color32::BLUE),
-        ];
-
-        return (
-            radiuses,
-            vertices,
-            positions,
-            rotations,
-            scales,
-            velocities,
-            rotation_speeds,
-            bounciness,
-            strokes,
-        );
-    }
-
-    fn create_polygon(
+    /// Create an Object
+    fn create_shape(
         &mut self,
-        position: glam::Vec2,
-        velocity: Vec2,
+        vertices: Vec<Vec2>,
         radius: f32,
-        segments: u16,
+        position: Vec2,
+        rotation: f32,
+        scale: Vec2,
+        velocity: Vec2,
+        rotation_speed: f32,
+        bounciness: f32,
         stroke: Stroke,
     ) {
-        // println!("Create Polygon at : {position}");
+        // println!("Create Shape at : {position}");
 
-        let vertices = gears::circle_vertices(radius, segments);
-
+        // Add Shape to Physic engine
         {
             let mut physics = self.physics.lock().unwrap();
-            physics.radiuses.push(radius);
+            // Object
             physics.vertices.push(vertices);
-            physics.calculated_vertices.push(vec![]);
             physics.edge_normals.push(vec![]);
+            physics.radiuses.push(radius);
+            physics.calculated_vertices.push(vec![]);
+            // Transform
             physics.positions.push(position);
-            physics.rotations.push(0.0);
-            physics.scales.push(Vec2::ONE);
+            physics.rotations.push(rotation);
+            physics.scales.push(scale);
+            // Physic
             physics.velocities.push(velocity);
-            physics.bounciness.push(1.0);
-            physics.rotation_speeds.push(-1.0);
+            physics.rotation_speeds.push(rotation_speed);
+            physics.bounciness.push(bounciness);
         };
 
         self.strokes.push(stroke);
@@ -463,101 +653,78 @@ impl EngineState {
     }
 }
 
-struct Mumper {
+pub struct Mumper {
     settings: Settings,
-    state: EngineState,
+    state: MumperState,
 }
 
 impl Mumper {
-    fn new(cc: &CreationContext) -> Self {
+    pub fn new(cc: &CreationContext) -> Self {
         Self {
             settings: Settings::new(),
-            state: EngineState::new(cc.egui_ctx.content_rect(), cc.egui_ctx.debug_painter()),
+            state: MumperState::new(cc.egui_ctx.content_rect(), cc.egui_ctx.debug_painter()),
         }
     }
 
-    fn reset_settings(&mut self) {
+    pub fn reset_settings(&mut self) {
         self.settings = Settings::new();
     }
 
-    fn reset_scene(&mut self) {
-        self.state = EngineState::new(self.state.viewport, self.state.viewport_painter.clone());
+    pub fn reset_scene(&mut self) {
+        self.state = MumperState::new(self.state.viewport, self.state.viewport_painter.clone());
     }
 
-    // UI COMPONENTS
+    // UPDATE
 
-    fn ui_settings(&mut self, ui: &mut Ui) {
-        let settings = &mut self.settings;
+    pub fn update(ui: &Ui) -> (f32, f32) {
+        ui.request_repaint_after(std::time::Duration::from_millis(16)); // 60 FPS
+        let dt = ui.input(|i| i.stable_dt); // DeltaTime in second
+        let fps = 1.0 / dt;
 
-        // Polygon Creation Settings
-        ui.horizontal(|ui| {
-            // Shape
-            ui.label("Polygon: ");
-            ui.label("Segments");
-            ui.add(egui::Slider::new(&mut settings.segments, 3..=100));
-            ui.label("Radius");
-            ui.add(egui::Slider::new(&mut settings.radius, 0.1..=10.0));
-        });
-
-        // Rigid body
-        ui.horizontal(|ui| {
-            ui.label("Rigid body: ");
-            ui.label("Velocity ");
-            ui.label("X");
-            ui.add(egui::Slider::new(
-                &mut settings.polygon_velocity.x,
-                -10.0..=10.0,
-            ));
-            ui.label("Y");
-            ui.add(egui::Slider::new(
-                &mut settings.polygon_velocity.y,
-                -10.0..=10.0,
-            ));
-        });
-
-        // Stroke Settings
-        ui.horizontal(|ui| {
-            ui.label("Stroke: ");
-            ui.label("Width:");
-            ui.add(egui::Slider::new(&mut settings.stroke_width, 1.0..=10.0));
-
-            let color_label = ui.label("Color:");
-            ui.color_edit_button_srgba(&mut settings.stroke_color)
-                .labelled_by(color_label.id);
-        });
-
-        // Rendering Settings
-        ui.horizontal(|ui: &mut Ui| {
-            ui.label("Gizmo: ");
-            ui.checkbox(&mut settings.is_drawing_normals, "Draw Normals");
-        });
+        return (dt, fps);
     }
 
-    fn ui_state(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            if ui.button("Reset Scene").clicked() {
-                self.reset_scene();
+    pub fn rendering(&mut self, ui: &mut Ui) -> Response {
+        // Draw Area
+        let (response, painter) = ui.allocate_painter(
+            ui.available_size(), // All remaining space
+            Sense::click(),
+        );
+        let rect = response.rect;
+
+        let state = &mut self.state;
+
+        state.viewport = rect;
+        state.viewport_painter = painter;
+
+        // Border
+        state.viewport_painter.rect_stroke(
+            rect,
+            5.0,
+            egui::Stroke::new(2.0, egui::Color32::GREEN),
+            egui::StrokeKind::Middle,
+        );
+
+        // Web Physics
+        // Handle pause
+        #[cfg(target_arch = "wasm32")]
+        {
+            if state.is_paused.load(std::sync::atomic::Ordering::Relaxed) {
+                continue;
             }
 
-            let settings = &mut self.settings;
-            let state = &mut self.state;
+            let mut physics = state.physics.lock().unwrap();
 
-            ui.label("Zoom :");
-            ui.add(egui::Slider::new(
-                &mut state.ppm,
-                settings.min_ppm..=settings.max_ppm,
-            ));
+            physics.tick(dt);
+        }
 
-            let mut local_pause = state.is_paused.load(Ordering::Relaxed);
+        state.render_frame(&self.settings);
 
-            if ui.checkbox(&mut local_pause, "Pause").changed() {
-                state.is_paused.store(local_pause, Ordering::Relaxed);
-            }
-        });
+        return response;
     }
 
     // Displayed on top of the viewport
-    fn hud(&mut self, fps: f32) {
+    pub fn hud(&mut self, fps: f32) {
         let state = &mut self.state;
         let painter = &mut state.viewport_painter;
 
@@ -583,9 +750,7 @@ impl Mumper {
         );
     }
 
-    // CONTROLS
-
-    fn camera_controls(&mut self, input_state: &InputState) {
+    pub fn camera_controls(&mut self, input_state: &InputState) {
         let settings = &mut self.settings;
         let state = &mut self.state;
 
@@ -613,88 +778,5 @@ impl Mumper {
             state.camera_position.x -= pointer_delta.x * sensivity;
             state.camera_position.y += pointer_delta.y * sensivity;
         }
-    }
-
-    fn input_handling(&mut self, response: Response, input_state: &InputState) {
-        // Input Detection
-        let lclick_released = input_state.pointer.primary_released();
-        let mut global_pointer_position = Pos2::new(0.0, 0.0);
-
-        if let Some(mouse_position) = input_state.pointer.hover_pos() {
-            global_pointer_position = mouse_position;
-        }
-
-        // Input Reaction
-        self.camera_controls(input_state);
-
-        let settings = &mut self.settings;
-        let state = &mut self.state;
-
-        // LClick = Create Polygon
-        if lclick_released && response.hovered() {
-            let world_pos = state.screen_to_world(global_pointer_position);
-            state.create_polygon(
-                world_pos,
-                settings.polygon_velocity,
-                settings.radius,
-                settings.segments,
-                Stroke::new(settings.stroke_width, settings.stroke_color),
-            );
-        }
-    }
-}
-
-impl eframe::App for Mumper {
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            ui.request_repaint_after(std::time::Duration::from_millis(16)); // 60 FPS
-            let dt = ui.input(|i| i.stable_dt); // DeltaTime in second
-            let fps = 1.0 / dt;
-
-            // UI
-
-            self.ui_settings(ui);
-            self.ui_state(ui);
-            self.hud(fps);
-
-            // SCENE
-
-            // Circles Draw Area
-            let (response, painter) = ui.allocate_painter(
-                ui.available_size(), // All remaining space
-                Sense::click(),
-            );
-            let rect = response.rect;
-
-            // Inputs Handling
-            ui.input(|input_state: &InputState| {
-                self.input_handling(response, input_state);
-            });
-
-            let state = &mut self.state;
-
-            state.viewport = rect;
-            state.viewport_painter = painter;
-
-            // Border
-            state.viewport_painter.rect_stroke(
-                rect,
-                5.0,
-                egui::Stroke::new(2.0, egui::Color32::GREEN),
-                egui::StrokeKind::Middle,
-            );
-
-            // Web Physics
-            #[cfg(target_arch = "wasm32")]
-            {
-                let mut physics = state.physics.lock().unwrap();
-
-                if !state.is_paused.load(std::sync::atomic::Ordering::Relaxed) {
-                    physics.tick(dt);
-                }
-            }
-
-            state.render_frame(&self.settings);
-        });
     }
 }

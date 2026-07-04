@@ -1,6 +1,7 @@
 # Mumper - 2D Engine
 
-Mumper is a 2D Engine written in Rust using egui</br>
+Mumper is a 2D Library Engine written in Rust</br>
+Checkout the [demo app](https://barbasoyun.github.io/Mumper-2D-Engine/) implementing the Engine</br>
 
 ## Features
 
