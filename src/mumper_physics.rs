@@ -1,12 +1,17 @@
 use glam::Vec2;
 
+// TODO :
+// Static Objects -> Collisions Detection + No Physic
+// 2 Collisions Type = 1) Radius 2) Edges
+// ECS
+// Remove Object
+// Quadtree -> Separate Space
+
 // Shared between Rendering & Physic Threads
 pub struct MumperPhysics {
-    // TODO : Quadtree -> Separate Space
     // Objects Data
-    // TODO : ECS
-    // Smart IDs
-    pub radiuses: Vec<f32>,
+    // ids: Vec<u16>,
+    // versions: Vec<u16>
     pub vertices: Vec<Vec<Vec2>>, // TODO : Flatten
     pub calculated_vertices: Vec<Vec<Vec2>>,
     pub edge_normals: Vec<Vec<Vec2>>,
@@ -14,9 +19,12 @@ pub struct MumperPhysics {
     pub positions: Vec<Vec2>,
     pub rotations: Vec<f32>, // 2D Object rotate only on Z axe
     pub scales: Vec<Vec2>,
+    // Collision
+    pub radiuses: Vec<f32>,
+    // edge_thicknesses: Vec<f32>
+    // Rigid bodies
     pub velocities: Vec<Vec2>, // meters / sec
     pub rotation_speeds: Vec<f32>,
-    // Rigid bodies
     pub bounciness: Vec<f32>,
 }
 
@@ -58,7 +66,7 @@ impl MumperPhysics {
     pub fn tick(&mut self, dt: f32) {
         let square_lines_thickness = 0.1;
 
-        // Object Collision Data
+        // Object Collisions Data
         let mut object_collisions1: Vec<usize> = vec![]; // Objects Index
         let mut object_collisions2: Vec<usize> = vec![];
         let mut collisions_normals: Vec<Vec2> = vec![];
@@ -111,7 +119,13 @@ impl MumperPhysics {
             );
 
             // Objects Collision
-            self.objects_collision(i, &mut object_collisions1, &mut object_collisions2, &mut collisions_normals,  &mut collisions_penetration_depth);
+            self.objects_collision(
+                i,
+                &mut object_collisions1,
+                &mut object_collisions2,
+                &mut collisions_normals,
+                &mut collisions_penetration_depth,
+            );
         }
     }
 
@@ -139,7 +153,7 @@ impl MumperPhysics {
 
     // Multiply base vertices with model matrix
     // return calculated_vertices
-    fn image_vertices(
+    pub fn image_vertices(
         position: Vec2,
         rotation: f32,
         scale: Vec2,
@@ -227,7 +241,7 @@ impl MumperPhysics {
         }
     }
 
-    // make an objetc bounce from a normal
+    // make an object bounce from a normal
     fn bounce(
         collision_normal: Vec2,
         penetration_depth: f32,
@@ -245,37 +259,44 @@ impl MumperPhysics {
         }
     }
 
-    fn objects_collision(&mut self, i: usize, object_collisions1: &mut Vec<usize>, object_collisions2: &mut Vec<usize>, collisions_normals: &mut Vec<Vec2>, collisions_penetration_depth: &mut Vec<f32>) {
+    fn objects_collision(
+        &mut self,
+        i: usize,
+        object_collisions1: &mut Vec<usize>,
+        object_collisions2: &mut Vec<usize>,
+        collisions_normals: &mut Vec<Vec2>,
+        collisions_penetration_depth: &mut Vec<f32>,
+    ) {
         // 1] Collision Detection
         let mut ignore_list: Vec<usize> = vec![]; // Indexes already captured
 
-            for j in 0..object_collisions2.len() {
-                if object_collisions2[j] == i {
-                    ignore_list.push(object_collisions1[j]);
-                }
+        for j in 0..object_collisions2.len() {
+            if object_collisions2[j] == i {
+                ignore_list.push(object_collisions1[j]);
+            }
+        }
+
+        // for each other object -> detect collision
+        for j in 0..self.positions.len() {
+            if j == i || self.radiuses[j] == 0.0 || ignore_list.contains(&j) {
+                continue;
             }
 
-            // for each other object -> detect collision
-            for j in 0..self.positions.len() {
-                if j == i || self.radiuses[j] == 0.0 || ignore_list.contains(&j) {
-                    continue;
-                }
+            let object2_pos = self.positions[j];
+            let direction = object2_pos - self.positions[i]; // direction from object1 -> object2
+            let distance = direction.length();
+            let distance_threshold = self.radiuses[i] + self.radiuses[j];
 
-                let object2_pos = self.positions[j];
-                let direction = object2_pos - self.positions[i]; // direction from object1 -> object2
-                let distance = direction.length();
-                let distance_threshold = self.radiuses[i] + self.radiuses[j];
+            if distance <= distance_threshold {
+                // Collision
+                let penetration_depth = distance - self.radiuses[i];
 
-                if distance <= distance_threshold {
-                    // Collision
-                    let penetration_depth = distance - self.radiuses[i];
-
-                    object_collisions1.push(i);
-                    object_collisions2.push(j);
-                    collisions_normals.push(direction.normalize());
-                    collisions_penetration_depth.push(penetration_depth);
-                }
+                object_collisions1.push(i);
+                object_collisions2.push(j);
+                collisions_normals.push(direction.normalize());
+                collisions_penetration_depth.push(penetration_depth);
             }
+        }
 
         // 2] Collisions Solver
         const SOLVER_ITERATIONS: usize = 6;
@@ -311,8 +332,7 @@ impl MumperPhysics {
 
                 // 2] Impulse Resolution
                 // Relative velocity
-                let rel_velocity =
-                    self.velocities[index2] - self.velocities[index1];
+                let rel_velocity = self.velocities[index2] - self.velocities[index1];
 
                 let vel_along_normal = rel_velocity.dot(normal);
 
@@ -336,6 +356,18 @@ impl MumperPhysics {
 
     // UTILS
 
+    // Detect if a point collide with a line (infinite)
+    // use dot product between line_normal & point
+    pub fn line_collision(line_start: Vec2, line_end: Vec2, thickness: f32, point: Vec2) -> bool {
+        let line_direction = line_end - line_start;
+        let line_normal = Self::vector_normal(line_direction);
+        let ap = point - line_start;
+
+        let distance = line_normal.dot(ap);
+
+        return distance <= thickness;
+    }
+
     // Get the vector between a point and its projection on an edge (limited size)
     pub fn edge_to_point(line_start: Vec2, line_end: Vec2, point: Vec2) -> Vec2 {
         let ab = line_end - line_start;
@@ -354,18 +386,6 @@ impl MumperPhysics {
         let to_point = point - closest_point;
 
         return to_point;
-    }
-
-    // Detect if a point collide with a line (infinite)
-    // use dot product between line_normal & point
-    pub fn line_collision(line_start: Vec2, line_end: Vec2, thickness: f32, point: Vec2) -> bool {
-        let line_direction = line_end - line_start;
-        let line_normal = Self::vector_normal(line_direction);
-        let ap = point - line_start;
-
-        let distance = line_normal.dot(ap);
-
-        return distance <= thickness;
     }
 
     // return the Counterclockwise normal of a 2D Vector

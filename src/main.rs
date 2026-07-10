@@ -46,7 +46,7 @@ fn main() {
             .start(
                 canvas,
                 web_options,
-                Box::new(|cc| Ok(Box::new(Mumper::new(cc)))),
+                Box::new(|cc| Ok(Box::new(MumperDemo::new(cc)))),
             )
             .await;
 
@@ -100,6 +100,9 @@ impl MumperDemo {
     fn new(cc: &CreationContext) -> Self {
         let settings = DemoSettings::new();
         let mut mumper: Mumper = Mumper::new(cc);
+
+        mumper.state.pause_physic(true);
+        mumper.settings.default_transform = true;
 
         Self::default_scene(&mut mumper.state);
 
@@ -221,7 +224,7 @@ impl MumperDemo {
             let mut local_pause = state.is_paused.load(Ordering::Relaxed);
 
             if ui.checkbox(&mut local_pause, "Pause").changed() {
-                state.is_paused.store(local_pause, Ordering::Relaxed);
+                state.pause_physic(local_pause);
             }
         });
     }
