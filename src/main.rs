@@ -101,9 +101,6 @@ impl MumperDemo {
         let settings = DemoSettings::new();
         let mut mumper: Mumper = Mumper::new(cc);
 
-        mumper.state.pause_physic(true);
-        mumper.settings.default_transform = true;
-
         Self::default_scene(&mut mumper.state);
 
         return Self { mumper, settings };
@@ -165,7 +162,7 @@ impl MumperDemo {
         // Polygon Creation Settings
         ui.horizontal(|ui| {
             // Shape
-            ui.label("Polygon: ");
+            ui.label("POLYGON: ");
             ui.label("Segments");
             ui.add(egui::Slider::new(&mut settings.segments, 3..=100));
             ui.label("Radius");
@@ -174,7 +171,7 @@ impl MumperDemo {
 
         // Rigid body
         ui.horizontal(|ui| {
-            ui.label("Rigid body: ");
+            ui.label("RIGID BODY: ");
             ui.label("Velocity ");
             ui.label("X");
             ui.add(egui::Slider::new(
@@ -190,7 +187,7 @@ impl MumperDemo {
 
         // Stroke Settings
         ui.horizontal(|ui| {
-            ui.label("Stroke: ");
+            ui.label("STROKE: ");
             ui.label("Width:");
             ui.add(egui::Slider::new(&mut settings.stroke_width, 1.0..=10.0));
 
@@ -226,6 +223,8 @@ impl MumperDemo {
             if ui.checkbox(&mut local_pause, "Pause").changed() {
                 state.pause_physic(local_pause);
             }
+
+            ui.checkbox(&mut mumper_settings.default_transform, "Default Transform");
         });
     }
 

@@ -325,16 +325,6 @@ impl MumperState {
         'get_physics_data: {
             let physics = self.physics.lock().unwrap();
 
-            // let is_valid_physic_data = physics.calculated_vertices.len() > 0;
-
-            // if !is_valid_physic_data { // eg Paused
-            //     self.calculated_vertices = physics.vertices.clone();
-
-            //     if settings.default_transform {
-            //         return;
-            //     }
-            // }
-
             if is_physics_paused && settings.default_transform {
                 self.calculated_vertices = physics.vertices.clone();
                 break 'get_physics_data;
@@ -466,13 +456,20 @@ impl MumperState {
         self.default_rotations.push(rotation.clone());
         self.default_scales.push(scale.clone());
 
+        let default_image = MumperPhysics::image_vertices(
+            position.clone(),
+            rotation.clone(),
+            scale.clone(),
+            &vertices,
+        );
+
         // Add Shape to Physic engine
         {
             let mut physics = self.physics.lock().unwrap();
             // Object
             physics.vertices.push(vertices);
             physics.edge_normals.push(vec![]);
-            physics.calculated_vertices.push(vec![]);
+            physics.calculated_vertices.push(default_image);
             // Transform
             physics.positions.push(position);
             physics.rotations.push(rotation);
