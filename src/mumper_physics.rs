@@ -1,17 +1,17 @@
 use glam::Vec2;
 
+use crate::MumperECS;
+
 // TODO :
-// Static Objects -> Collisions Detection + No Physic
-// 2 Collisions Type = 1) Radius 2) Edges
-// ECS
-// Remove Object
+// Components = Transform, Radius Collider, Segment Collider, Rigidbody (Composition), Renderer
+// 2 Collisions Type = 1) Radius 2) Segments
 // Quadtree -> Separate Space
 
 // Shared between Rendering & Physic Threads
 pub struct MumperPhysics {
-    // Objects Data
-    // ids: Vec<u16>,
-    // versions: Vec<u16>
+    // Components
+    // transformHolder: ComponentHolder
+    // Entity Data
     pub vertices: Vec<Vec<Vec2>>, // TODO : Flatten
     pub calculated_vertices: Vec<Vec<Vec2>>,
     pub edge_normals: Vec<Vec<Vec2>>,
@@ -64,6 +64,12 @@ impl MumperPhysics {
     // PHYSICS UPDATE
 
     pub fn tick(&mut self, dt: f32) {
+        // TODO :
+        // 1) foreach collider(calculated_vertices) -> Build collisions data
+        // 2) foreach rigidbody -> Physics + Change Transform
+        // Rendering side
+        // 3) Calculate vertex
+
         let square_lines_thickness = 0.1;
 
         // Object Collisions Data
