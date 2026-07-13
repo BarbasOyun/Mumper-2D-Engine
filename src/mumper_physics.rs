@@ -28,6 +28,14 @@ pub struct MumperPhysics {
     pub bounciness: Vec<f32>,
 }
 
+crate::mumper_ecs::define_component_storage!(
+    struct TransformStorage {
+        positions: Vec2,
+        rotations: f32,
+        scales: Vec2,
+    }
+);
+
 impl MumperPhysics {
     pub fn new(
         radiuses: Vec<f32>,
@@ -47,6 +55,22 @@ impl MumperPhysics {
             edge_normals.push(vec![]);
         }
 
+        let mut mumper_ecs = MumperECS::new();
+
+        // create entity
+        let entity_id = mumper_ecs.entity_ids.len() as u32;
+        mumper_ecs.entity_ids.push(entity_id);
+        
+        let mut transform_storage = TransformStorage::new();
+        transform_storage.insert(entity_id, Vec2::new(0.0, 0.0), 0.0, Vec2::ZERO);
+
+        let (x, y) = Self::test();
+
+        let (position, rotation scale) = transform_storage.get_component(entity_id);
+        let x_pos = position.x;
+        println!("x_pos = {x_pos}");
+        println!("rotation = {rotation}");
+
         return Self {
             radiuses,
             vertices,
@@ -62,6 +86,10 @@ impl MumperPhysics {
     }
 
     // PHYSICS UPDATE
+
+    fn test() -> (u32, u32) {
+        return (10, 10);
+    }
 
     pub fn tick(&mut self, dt: f32) {
         // TODO :
