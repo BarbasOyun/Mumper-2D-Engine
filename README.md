@@ -5,13 +5,20 @@ Checkout the [demo app](https://barbasoyun.github.io/Mumper-2D-Engine/) implemen
 
 ## Features
 
+-Demo version = Polygon Drawing</br>
+
+-egui for rendering</br>
 -World Positions in meter</br>
--Polygon Drawing</br>
+-Render 2D Shape using Vertices</br>
+-2D Physics Engine</br>
+-ECS with 5 Components : Renderer, Transform, RadiusCollider, SegmentsCollider, Rigidbody</br>
 
 ## Main Goals
 
--2D Coordinate / Camera system</br>
+-Make a 2D Coordinate / Camera system</br>
 -Learn 2D Physics from scratch</br>
+-Remake a better ECS</br>
+-Have a simple 2D Engine ready for any sort of tests</br>
 
 ## Progress
 

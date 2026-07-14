@@ -1,84 +1,31 @@
 use glam::Vec2;
 
-use crate::MumperECS;
+use crate::Mumper;
+use crate::mumper_ecs::TransformStorage;
+
+const SOLVER_ITERATIONS: usize = 6;
 
 // TODO :
-// Components = Transform, Radius Collider, Segment Collider, Rigidbody (Composition), Renderer
-// 2 Collisions Type = 1) Radius 2) Segments
 // Quadtree -> Separate Space
 
-// Shared between Rendering & Physic Threads
 pub struct MumperPhysics {
-    // Components
-    // transformHolder: ComponentHolder
-    // Entity Data
-    pub vertices: Vec<Vec<Vec2>>, // TODO : Flatten
-    pub calculated_vertices: Vec<Vec<Vec2>>,
-    pub edge_normals: Vec<Vec<Vec2>>,
-    // Transforms
-    pub positions: Vec<Vec2>,
-    pub rotations: Vec<f32>, // 2D Object rotate only on Z axe
-    pub scales: Vec<Vec2>,
-    // Collision
-    pub radiuses: Vec<f32>,
-    // edge_thicknesses: Vec<f32>
+    pub transform_storage: TransformStorage, // Physics have its own version
     // Rigid bodies
     pub velocities: Vec<Vec2>, // meters / sec
     pub rotation_speeds: Vec<f32>,
     pub bounciness: Vec<f32>,
 }
 
-crate::mumper_ecs::define_component_storage!(
-    struct TransformStorage {
-        positions: Vec2,
-        rotations: f32,
-        scales: Vec2,
-    }
-);
-
 impl MumperPhysics {
     pub fn new(
-        radiuses: Vec<f32>,
-        vertices: Vec<Vec<Vec2>>,
-        positions: Vec<Vec2>,
-        rotations: Vec<f32>,
-        scales: Vec<Vec2>,
         velocities: Vec<Vec2>,
         rotation_speeds: Vec<f32>,
         bounciness: Vec<f32>,
     ) -> Self {
-        let mut calculated_vertices = vec![];
-        let mut edge_normals = vec![];
-
-        for _ in 0..vertices.len() {
-            calculated_vertices.push(vec![]);
-            edge_normals.push(vec![]);
-        }
-
-        let mut mumper_ecs = MumperECS::new();
-
-        // create entity
-        let entity_id = mumper_ecs.entity_ids.len() as u32;
-        mumper_ecs.entity_ids.push(entity_id);
-        
-        let mut transform_storage = TransformStorage::new();
-        transform_storage.insert(entity_id, Vec2::new(0.0, 0.0), 0.0, Vec2::ZERO);
-
-        let (x, y) = Self::test();
-
-        let (position, rotation scale) = transform_storage.get_component(entity_id);
-        let x_pos = position.x;
-        println!("x_pos = {x_pos}");
-        println!("rotation = {rotation}");
+        let transform_storage = TransformStorage::new();
 
         return Self {
-            radiuses,
-            vertices,
-            calculated_vertices,
-            positions,
-            edge_normals,
-            rotations,
-            scales,
+            transform_storage,
             velocities,
             rotation_speeds,
             bounciness,
@@ -87,14 +34,11 @@ impl MumperPhysics {
 
     // PHYSICS UPDATE
 
-    fn test() -> (u32, u32) {
-        return (10, 10);
-    }
-
-    pub fn tick(&mut self, dt: f32) {
+    pub fn tick(state: Mumper, dt: f32) {
         // TODO :
-        // 1) foreach collider(calculated_vertices) -> Build collisions data
-        // 2) foreach rigidbody -> Physics + Change Transform
+        // Physics side
+        // 1) foreach collider(use calculated_vertices) -> Build collisions data
+        // 2) foreach rigidbody -> Physics + Change Transform (Use Collisions)
         // Rendering side
         // 3) Calculate vertex
 
@@ -107,27 +51,31 @@ impl MumperPhysics {
         let mut collisions_penetration_depth: Vec<f32> = vec![];
 
         // for each object
-        for i in 0..self.positions.len() {
+        for i in 0..state.ecs.transform_storage.entities.len() {
             // object properties
             let velocity = &mut self.velocities[i];
-            let rotation = &mut self.rotations[i];
+            let rotation = &mut self.transform_storage.rotations[i];
             let rotation_speed = &mut self.rotation_speeds[i];
-            let scale = &mut self.scales[i];
+            let scale = &mut self.transform_storage.scales[i];
+
             let base_vertices = &self.vertices[i];
             let bounciness = &self.bounciness[i];
 
-            // 1] Transforms
             Self::transform(
                 &dt,
-                &mut self.positions[i],
+                &mut self.transform_storage.positions[i],
                 velocity,
                 rotation,
                 rotation_speed,
             );
 
             // 2] Frame Image -> vertices * model matrix
-            let calculated_vertices =
-                Self::image_vertices(self.positions[i], *rotation, *scale, base_vertices);
+            let calculated_vertices = Self::image_vertices(
+                self.transform_storage.positions[i],
+                *rotation,
+                *scale,
+                base_vertices,
+            );
             self.calculated_vertices[i] = calculated_vertices;
 
             // 3] Calculate Edges normal
@@ -137,23 +85,23 @@ impl MumperPhysics {
             self.edge_normals[i] = edge_normals;
 
             // 4] Collisions
-            if self.radiuses[i] == 0.0 {
+            if self.radius_collider_storage.radiuses[i] == 0.0 {
                 continue;
             }
 
             // Walls Collisions
             let square = &self.calculated_vertices[0];
             Self::wall_collisions(
-                &mut self.radiuses[i],
-                &mut self.positions[i],
+                &mut self.radius_collider_storage.radiuses[i],
+                &mut self.transform_storage.positions[i],
                 velocity,
                 bounciness,
                 square,
                 &square_lines_thickness,
             );
 
-            // Objects Collision
-            self.objects_collision(
+            // 1] Collision Detection
+            self.object_collisions(
                 i,
                 &mut object_collisions1,
                 &mut object_collisions2,
@@ -161,6 +109,14 @@ impl MumperPhysics {
                 &mut collisions_penetration_depth,
             );
         }
+
+        // 2] Solve Collisions
+        self.collision_solver(
+            &mut object_collisions1,
+            &mut object_collisions2,
+            &mut collisions_normals,
+            &mut collisions_penetration_depth,
+        );
     }
 
     // Take an object and apply its transform -> called every frame
@@ -293,48 +249,59 @@ impl MumperPhysics {
         }
     }
 
-    fn objects_collision(
+    // Check all the collisions of an Entity
+    // Build Collisions list
+    fn object_collisions(
         &mut self,
-        i: usize,
+        entity_id: usize,
         object_collisions1: &mut Vec<usize>,
         object_collisions2: &mut Vec<usize>,
         collisions_normals: &mut Vec<Vec2>,
         collisions_penetration_depth: &mut Vec<f32>,
     ) {
-        // 1] Collision Detection
         let mut ignore_list: Vec<usize> = vec![]; // Indexes already captured
 
-        for j in 0..object_collisions2.len() {
-            if object_collisions2[j] == i {
-                ignore_list.push(object_collisions1[j]);
+        for i in 0..object_collisions2.len() {
+            if object_collisions2[i] == entity_id {
+                ignore_list.push(object_collisions1[i]);
             }
         }
 
         // for each other object -> detect collision
-        for j in 0..self.positions.len() {
-            if j == i || self.radiuses[j] == 0.0 || ignore_list.contains(&j) {
+        for i in 0..self.transform_storage.entities.len() {
+            if i == entity_id
+                || self.radius_collider_storage.radiuses[i] == 0.0
+                || ignore_list.contains(&i)
+            {
                 continue;
             }
 
-            let object2_pos = self.positions[j];
-            let direction = object2_pos - self.positions[i]; // direction from object1 -> object2
+            let object2_pos = self.transform_storage.positions[i];
+            let direction = object2_pos - self.transform_storage.positions[entity_id]; // direction from object1 -> object2
             let distance = direction.length();
-            let distance_threshold = self.radiuses[i] + self.radiuses[j];
+            let distance_threshold = self.radius_collider_storage.radiuses[entity_id]
+                + self.radius_collider_storage.radiuses[i];
 
             if distance <= distance_threshold {
                 // Collision
-                let penetration_depth = distance - self.radiuses[i];
+                let penetration_depth = distance - self.radius_collider_storage.radiuses[entity_id];
 
-                object_collisions1.push(i);
-                object_collisions2.push(j);
+                object_collisions1.push(entity_id);
+                object_collisions2.push(i);
                 collisions_normals.push(direction.normalize());
                 collisions_penetration_depth.push(penetration_depth);
             }
         }
+    }
 
-        // 2] Collisions Solver
-        const SOLVER_ITERATIONS: usize = 6;
-
+    // TODO : Collisions Context
+    fn collision_solver(
+        &mut self,
+        object_collisions1: &mut Vec<usize>,
+        object_collisions2: &mut Vec<usize>,
+        collisions_normals: &mut Vec<Vec2>,
+        collisions_penetration_depth: &mut Vec<f32>,
+    ) {
         for _iteration in 0..SOLVER_ITERATIONS {
             for i in 0..object_collisions1.len() {
                 // inv_mass = invariant mass
@@ -361,8 +328,8 @@ impl MumperPhysics {
                 let correction_vector = normal * correction_magnitude;
 
                 // Separation
-                self.positions[index1] -= correction_vector * a_inv_mass;
-                self.positions[index2] += correction_vector * b_inv_mass;
+                self.transform_storage.positions[index1] -= correction_vector * a_inv_mass;
+                self.transform_storage.positions[index2] += correction_vector * b_inv_mass;
 
                 // 2] Impulse Resolution
                 // Relative velocity
@@ -420,15 +387,5 @@ impl MumperPhysics {
         let to_point = point - closest_point;
 
         return to_point;
-    }
-
-    // return the Counterclockwise normal of a 2D Vector
-    pub fn vector_normal(vector: Vec2) -> Vec2 {
-        // Clockwise
-        // let vector_normal = Vec2::new(-vector.y, vector.x).normalize();
-        // Counterclockwise
-        let vector_normal = Vec2::new(vector.y, -vector.x).normalize();
-
-        return vector_normal;
     }
 }

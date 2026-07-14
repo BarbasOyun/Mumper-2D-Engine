@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 use mumper::Mumper;
+use mumper::MumperECS;
 use mumper::MumperState;
 use mumper::gears;
 
@@ -89,6 +90,7 @@ impl DemoSettings {
     }
 }
 
+// How to deal with demo state? eg score
 struct MumperDemo {
     // Mumper Implementation
     mumper: Mumper,
@@ -112,7 +114,7 @@ impl MumperDemo {
     }
 
     fn reset_scene(&mut self) {
-        self.mumper.reset_scene();
+        self.mumper.clear_scene();
         Self::default_scene(&mut self.mumper.state);
     }
 
@@ -339,7 +341,7 @@ impl MumperDemo {
 impl eframe::App for MumperDemo {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            let (dt, fps) = Mumper::update(ui);
+            let (dt, fps) = self.mumper.update(ui);
 
             // Ui
             self.ui_settings(ui);

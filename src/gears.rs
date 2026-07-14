@@ -27,6 +27,16 @@ pub fn get_average_point(point1: Vec2, point2: Vec2) -> Vec2 {
 
 // GEOMETRY
 
+// return the Counterclockwise normal of a 2D Vector
+pub fn vector_normal(vector: Vec2) -> Vec2 {
+    // Clockwise
+    // let vector_normal = Vec2::new(-vector.y, vector.x).normalize();
+    // Counterclockwise
+    let vector_normal = Vec2::new(vector.y, -vector.x).normalize();
+
+    return vector_normal;
+}
+
 // Get a position on a Circle
 // progress = (progress + 0.01) % (math.pi * 2)
 pub fn circle_pos(radius: f32, progress: f32) -> Vec2 {
