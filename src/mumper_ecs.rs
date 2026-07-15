@@ -13,16 +13,18 @@
 
 use glam::Vec2;
 
+use crate::Mumper;
+use crate::MumperPhysics;
+
 pub struct MumperECS {
     pub entity_ids: Vec<u32>,
     // versions: Vec<u32>,
-    // Cascade Deletion : Entity -> Components
     entities_bitmask: Vec<u64>, // Avoid checking if every ComponentStorage have an entity on Removing it
 
     // Components
-    // Scene
-    pub transform_storage: TransformStorage,
+    // renderer_storage
     // Physics
+    pub transform_storage: TransformStorage,
     pub radius_collider_storage: RadiusColliderStorage,
     // pub segments_collider_storage: RadiusColliderStorage,
     // Rigid bodies,
@@ -65,23 +67,64 @@ impl MumperECS {
     }
 
     // TODO : use create_entity_comp
+    // create an entity with transform
     pub fn create_physics_entity(
-        ecs: &mut MumperECS,
+        state: &mut Mumper,
         position: Vec2,
         rotation: f32,
         scale: Vec2,
+        vertices: Vec<Vec2>,
+        // Collider
+        radius: f32,
+        // Rigidbody
+        velocity: Vec2,
+        rotation_speed: f32,
+        bounciness: f32,
     ) -> u32 {
         // Create Entity
-        let entity_id = Self::create_entity(&mut ecs.entity_ids);
+        let entity_id = Self::create_entity(&mut state.ecs.entity_ids);
 
-        // Add Transform Component
-        ecs.transform_storage.add(
-            entity_id, position, rotation, scale, position, rotation, scale,
+        let ecs = &mut state.ecs;
+
+        // ECS Components
+        ecs.transform_storage
+            .add(entity_id, position, rotation, scale);
+
+        ecs.radius_collider_storage.add(entity_id, radius);
+
+        let default_image = MumperPhysics::image_vertices(
+            position.clone(),
+            rotation.clone(),
+            scale.clone(),
+            &vertices,
         );
+
+        // Add Shape to Physic engine
+        {
+            let mut physics = state.physics.lock().unwrap();
+
+            // Add Physics Components
+            physics
+                .transform_storage
+                .add(entity_id, position, rotation, scale);
+
+            physics.radius_collider_storage.add(entity_id, radius);
+
+            // Entity
+            physics.vertices.push(vertices);
+            physics.edge_normals.push(vec![]);
+            physics.calculated_vertices.push(default_image);
+
+            // Rigidbody
+            physics.velocities.push(velocity);
+            physics.rotation_speeds.push(rotation_speed);
+            physics.bounciness.push(bounciness);
+        };
 
         return entity_id;
     }
 
+    // Cascade Deletion : Entity -> Components
     pub fn remove_entity(ecs: &mut MumperECS, entity_id: u32) {
         // Remove all Components
         let ent_id = entity_id as usize;
@@ -92,9 +135,15 @@ impl MumperECS {
         let mask = ecs.entities_bitmask[ent_id];
 
         // Bitwise operation
-        if (mask & TransformStorage::TYPE.mask()) != 0 {
-            ecs.transform_storage.remove(entity_id);
-        }
+        // if (mask & TransformStorage::TYPE.mask()) != 0 {
+        //     ecs.transform_storage.remove(entity_id);
+        // }
+
+        // Remove all physics components
+        // {
+        //     let mut physics = state.physics.lock().unwrap();
+        //     // remove physic components
+        // };
 
         // Reset mask
         ecs.entities_bitmask[ent_id] = 0;
@@ -110,15 +159,20 @@ impl MumperECS {
 
     // COMPONENTS
 
+    pub fn add_comp(ecs: &mut MumperECS, entity_id: u32, component_type: ComponentType) {
+        let ent_id = entity_id as usize;
+        if ent_id >= ecs.entities_bitmask.len() {
+            return;
+        }
+
+        let mask = ecs.entities_bitmask[ent_id];
+
+        // Bitwise operation
+    }
+
     pub fn add_component<T: Component>(entity_id: u32, component: &mut T) {
         component.add_default(entity_id);
-
         // Update entities_bitmask
-
-        // Subscribe to onRemove
-        // self.on_remove_entity.push(|entity_id| {
-        //     component.remove(entity_id);
-        // });
     }
 
     pub fn get_component_id<T: Component>(entity_id: u32, component: T) -> u32 {
@@ -127,6 +181,7 @@ impl MumperECS {
 
     pub fn remove_component<T: Component>(entity_id: u32, component: &mut T) {
         component.remove(entity_id);
+        // Update entities_bitmask
     }
 
     // Create a pool of Entities -> Object Pooling
@@ -164,23 +219,9 @@ pub trait Component {
 
 // COMPONENTS
 
-// Scene Components
-
-// Every Physics Component depend on Transform
-crate::mumper_ecs::component_storage!(
-    struct TransformStorage {
-        default_positions: Vec2,
-        default_rotations: f32,
-        default_scales: Vec2,
-        positions: Vec2,
-        rotations: f32,
-        scales: Vec2,
-    }
-);
-
 // Main Components
 
-crate::mumper_ecs::component_storage!(
+component_storage!(
     struct ShapeRendererStorage {
         // TODO : Flatten
         vertices: Vec<Vec2>,
@@ -193,19 +234,31 @@ crate::mumper_ecs::component_storage!(
 
 // Physics Components
 
-crate::mumper_ecs::component_storage!(
+// Every Physics Component depend on Transform
+component_storage!(
+    struct TransformStorage {
+        positions: Vec2,
+        rotations: f32,
+        scales: Vec2,
+    }
+);
+
+// PhysicsTransform
+// No default transform
+
+component_storage!(
     struct RadiusColliderStorage {
         radiuses: f32,
     }
 );
 
-crate::mumper_ecs::component_storage!(
+component_storage!(
     struct SegmentColliderStorage {
         edge_thicknesses: f32,
     }
 );
 
-crate::mumper_ecs::component_storage!(
+component_storage!(
     struct RigidbodyStorage {
         velocities: Vec2, // meters / sec
         rotation_speeds: f32,
@@ -221,6 +274,7 @@ macro_rules! component_storage {
             $($field_name:ident : $field_type:ty),+ $(,)? // TODO : Default Values
         }
     ) => {
+        #[derive(Clone)]
         pub struct $storage_name {
             // Default vectors
             pub sparse: Vec<usize>,
@@ -301,5 +355,3 @@ macro_rules! component_storage {
 }
 
 pub(crate) use component_storage;
-
-use crate::Mumper;

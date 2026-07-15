@@ -16,7 +16,6 @@ use crate::mumper_ecs::*;
 pub struct Mumper {
     pub settings: Settings,
     // editor_state: EditorState, (Camera)
-    // pub state: MumperState,
     // ECS
     pub ecs: MumperECS,
     // Physics
@@ -29,7 +28,7 @@ pub struct Mumper {
 impl Mumper {
     pub fn new(cc: &CreationContext) -> Self {
         let physics: Arc<Mutex<MumperPhysics>> =
-            Arc::new(Mutex::new(MumperPhysics::new(vec![], vec![], vec![])));
+            Arc::new(Mutex::new(MumperPhysics::new()));
 
         let is_paused: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 
@@ -42,6 +41,7 @@ impl Mumper {
             // Physics
             physics,
             is_paused,
+            // Renderer
             renderer: MumperRenderer::new(cc.egui_ctx.content_rect(), cc.egui_ctx.debug_painter()),
         }
     }
@@ -84,26 +84,30 @@ impl Mumper {
         return (dt, fps);
     }
 
+    pub fn game_update(&mut self, ui: &mut Ui) -> Response {
+        return MumperRenderer::rendering(self, ui);
+    }
+
     // Displayed on top of the viewport
     pub fn hud(&mut self, fps: f32) {
-        let state = &mut self.state;
-        let painter = &mut state.viewport_painter;
+        let renderer = &mut self.renderer;
+        let painter = &mut renderer.viewport_painter;
 
         // FPS Display
         let alpha = 0.05;
-        state.smoothed_fps = (state.smoothed_fps * (1.0 - alpha)) + (fps * alpha);
+        renderer.smoothed_fps = (renderer.smoothed_fps * (1.0 - alpha)) + (fps * alpha);
 
         painter.text(
-            state.viewport.left_top() + egui::vec2(10.0, 10.0), // 10px padding from top-left
+            renderer.viewport.left_top() + egui::vec2(10.0, 10.0), // 10px padding from top-left
             egui::Align2::LEFT_TOP,
-            format!("FPS: {:.2}", state.smoothed_fps),
+            format!("FPS: {:.2}", renderer.smoothed_fps),
             egui::FontId::proportional(14.0),
             egui::Color32::WHITE,
         );
 
         // Controls Display
         painter.text(
-            state.viewport.left_top() + egui::vec2(10.0, 30.0),
+            renderer.viewport.left_top() + egui::vec2(10.0, 30.0),
             egui::Align2::LEFT_TOP,
             "Look : Right Click",
             egui::FontId::proportional(14.0),
@@ -113,8 +117,7 @@ impl Mumper {
 
     pub fn camera_controls(&mut self, input_state: &InputState) {
         let settings = &mut self.settings;
-        // let state = &mut self.state;
-        let renderer = &mut self.state.renderer;
+        let renderer = &mut self.renderer;
 
         let pointer_delta: egui::Vec2 = input_state.pointer.delta();
         let rclick_hold = input_state.pointer.secondary_down();
@@ -136,7 +139,7 @@ impl Mumper {
         // RClick = Move Camera
         if rclick_hold {
             let sensivity =
-                settings.camera_sensitivity * (settings.max_ppm / state.ppm) as f32 * 0.001;
+                settings.camera_sensitivity * (settings.max_ppm / renderer.ppm) as f32 * 0.001;
             renderer.camera_position.x -= pointer_delta.x * sensivity;
             renderer.camera_position.y += pointer_delta.y * sensivity;
         }
@@ -190,39 +193,36 @@ impl Mumper {
         stroke: Stroke,
     ) {
         // println!("Create Shape at : {position}");
+        MumperECS::create_physics_entity(self, position, rotation, scale, vertices, radius, velocity, rotation_speed, bounciness);
 
-        self.default_positions.push(position.clone());
-        self.default_rotations.push(rotation.clone());
-        self.default_scales.push(scale.clone());
-
-        let default_image = MumperPhysics::image_vertices(
-            position.clone(),
-            rotation.clone(),
-            scale.clone(),
-            &vertices,
-        );
+        // self.default_positions.push(position.clone());
+        // self.default_rotations.push(rotation.clone());
+        // self.default_scales.push(scale.clone());
 
         // Add Shape to Physic engine
-        {
-            let mut physics = self.physics.lock().unwrap();
+        // {
+        //     let mut physics = self.physics.lock().unwrap();
 
-            // Creeate Entity
-            let entity_id = physics.create_physics_entity(position, rotation, scale);
+        //     // Add Radius Collider
+        //     // Add Rigidbody
 
-            // Add RadiusCollider Component
-            physics.radius_collider_storage.add(entity_id, radius);
+        //     // Create Entity
+        //     let entity_id = physics.create_physics_entity(position, rotation, scale);
 
-            // Object
-            physics.vertices.push(vertices);
-            physics.edge_normals.push(vec![]);
-            physics.calculated_vertices.push(default_image);
-            // Physic
-            physics.velocities.push(velocity);
-            physics.rotation_speeds.push(rotation_speed);
-            physics.bounciness.push(bounciness);
-        };
+        //     // Add RadiusCollider Component
+        //     physics.radius_collider_storage.add(entity_id, radius);
 
-        self.strokes.push(stroke);
+        //     // Object
+        //     physics.vertices.push(vertices);
+        //     physics.edge_normals.push(vec![]);
+        //     physics.calculated_vertices.push(default_image);
+        //     // Physic
+        //     physics.velocities.push(velocity);
+        //     physics.rotation_speeds.push(rotation_speed);
+        //     physics.bounciness.push(bounciness);
+        // };
+
+        self.renderer.strokes.push(stroke);
     }
 }
 

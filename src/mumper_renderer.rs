@@ -17,7 +17,6 @@ pub struct MumperRenderer {
     pub camera_size_x: f32,
     pub camera_size_y: f32,
     // Entities Rendering
-    pub vertices: Vec<Vec<Vec2>>, // TODO : Flatten
     pub calculated_vertices: Vec<Vec<Vec2>>,
     pub edge_normals: Vec<Vec<Vec2>>,
     pub strokes: Vec<Stroke>,
@@ -44,7 +43,6 @@ impl MumperRenderer {
             camera_size_x: 4.0,
             camera_size_y: 4.0,
             // Entities Rendering
-            vertices: vec![],
             calculated_vertices: vec![],
             edge_normals: vec![],
             strokes: vec![],
@@ -80,19 +78,21 @@ impl MumperRenderer {
 
         let is_physics_paused = state.is_paused.load(Ordering::Relaxed);
 
-        // Get Render Data = Position & Vertices
-        // From MumperPhysics or Default
+        // Get Render Data = Position & Vertices From MumperPhysics
         'get_physics_data: {
             let physics = state.physics.lock().unwrap();
 
-            // TODO : Get Transform from physics
+            // TODO : Double-Buffered State
+            // TODO : Get Transforms + calculated_vertices from physics
 
             // if is_physics_paused && settings.default_transform {
             //     self.calculated_vertices = physics.vertices.clone();
             //     break 'get_physics_data;
             // }
 
-            // self.calculated_vertices = physics.calculated_vertices.clone();
+            state.renderer.calculated_vertices = physics.calculated_vertices.clone();
+
+            state.ecs.transform_storage = physics.transform_storage.clone();
         };
 
         // Draw normals

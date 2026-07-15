@@ -1,7 +1,7 @@
 use glam::Vec2;
 
-use crate::Mumper;
-use crate::mumper_ecs::TransformStorage;
+use crate::gears;
+use crate::mumper_ecs::*;
 
 const SOLVER_ITERATIONS: usize = 6;
 
@@ -10,6 +10,14 @@ const SOLVER_ITERATIONS: usize = 6;
 
 pub struct MumperPhysics {
     pub transform_storage: TransformStorage, // Physics have its own version
+    // Entities
+    // RenderData?
+    pub vertices: Vec<Vec<Vec2>>, // TODO : Flatten
+    pub calculated_vertices: Vec<Vec<Vec2>>,
+    pub edge_normals: Vec<Vec<Vec2>>,
+    // Colliders
+    pub radius_collider_storage: RadiusColliderStorage,
+    // SegmentsCollider
     // Rigid bodies
     pub velocities: Vec<Vec2>, // meters / sec
     pub rotation_speeds: Vec<f32>,
@@ -17,30 +25,31 @@ pub struct MumperPhysics {
 }
 
 impl MumperPhysics {
-    pub fn new(
-        velocities: Vec<Vec2>,
-        rotation_speeds: Vec<f32>,
-        bounciness: Vec<f32>,
-    ) -> Self {
+    pub fn new() -> Self {
         let transform_storage = TransformStorage::new();
+        let radius_collider_storage = RadiusColliderStorage::new();
 
         return Self {
             transform_storage,
-            velocities,
-            rotation_speeds,
-            bounciness,
+            vertices: vec![],
+            calculated_vertices: vec![],
+            edge_normals: vec![],
+            radius_collider_storage,
+            velocities: vec![],
+            rotation_speeds: vec![],
+            bounciness: vec![],
         };
     }
 
     // PHYSICS UPDATE
 
-    pub fn tick(state: Mumper, dt: f32) {
+    pub fn tick(&mut self, dt: f32) {
         // TODO :
-        // Physics side
-        // 1) foreach collider(use calculated_vertices) -> Build collisions data
-        // 2) foreach rigidbody -> Physics + Change Transform (Use Collisions)
-        // Rendering side
-        // 3) Calculate vertex
+        // 1) Transform
+        // 2) Calculate vertex
+        // 3) foreach collider(use calculated_vertices) -> Build collisions data
+        // 4) foreach rigidbody -> Physics + Change Transform (Use Collisions)
+        // Copy Components to main
 
         let square_lines_thickness = 0.1;
 
@@ -50,9 +59,9 @@ impl MumperPhysics {
         let mut collisions_normals: Vec<Vec2> = vec![];
         let mut collisions_penetration_depth: Vec<f32> = vec![];
 
-        // for each object
-        for i in 0..state.ecs.transform_storage.entities.len() {
-            // object properties
+        // for each Entity
+        for i in 0..self.transform_storage.entities.len() {
+            // Entity properties
             let velocity = &mut self.velocities[i];
             let rotation = &mut self.transform_storage.rotations[i];
             let rotation_speed = &mut self.rotation_speeds[i];
@@ -61,6 +70,7 @@ impl MumperPhysics {
             let base_vertices = &self.vertices[i];
             let bounciness = &self.bounciness[i];
 
+            // 1] Transform
             Self::transform(
                 &dt,
                 &mut self.transform_storage.positions[i],
@@ -141,6 +151,8 @@ impl MumperPhysics {
         *rotation += rotation_speed * dt;
     }
 
+    // RENDER DATA
+
     // Multiply base vertices with model matrix
     // return calculated_vertices
     pub fn image_vertices(
@@ -176,13 +188,15 @@ impl MumperPhysics {
             let next_vertex = vertices[next_index];
 
             let edge_vector = next_vertex - vertex;
-            let edge_normal = Self::vector_normal(edge_vector);
+            let edge_normal = gears::vector_normal(edge_vector);
 
             edge_normals.push(edge_normal);
         }
 
         return edge_normals;
     }
+
+    // COLLISIONS DETECTION
 
     fn wall_collisions(
         radius: &f32,
@@ -231,24 +245,6 @@ impl MumperPhysics {
         }
     }
 
-    // make an object bounce from a normal
-    fn bounce(
-        collision_normal: Vec2,
-        penetration_depth: f32,
-        velocity: &mut Vec2,
-        bounciness: &f32,
-        position: &mut Vec2,
-    ) {
-        let vel_along_normal = velocity.dot(collision_normal);
-
-        if vel_along_normal < 0.0 {
-            let impulse_scalar = -(1.0 + bounciness) * vel_along_normal;
-            *velocity += collision_normal * impulse_scalar;
-
-            *position += collision_normal * penetration_depth;
-        }
-    }
-
     // Check all the collisions of an Entity
     // Build Collisions list
     fn object_collisions(
@@ -291,6 +287,26 @@ impl MumperPhysics {
                 collisions_normals.push(direction.normalize());
                 collisions_penetration_depth.push(penetration_depth);
             }
+        }
+    }
+
+    // RIGIDBODY / SOLVER
+
+    // make an object bounce from a normal
+    fn bounce(
+        collision_normal: Vec2,
+        penetration_depth: f32,
+        velocity: &mut Vec2,
+        bounciness: &f32,
+        position: &mut Vec2,
+    ) {
+        let vel_along_normal = velocity.dot(collision_normal);
+
+        if vel_along_normal < 0.0 {
+            let impulse_scalar = -(1.0 + bounciness) * vel_along_normal;
+            *velocity += collision_normal * impulse_scalar;
+
+            *position += collision_normal * penetration_depth;
         }
     }
 
@@ -361,7 +377,7 @@ impl MumperPhysics {
     // use dot product between line_normal & point
     pub fn line_collision(line_start: Vec2, line_end: Vec2, thickness: f32, point: Vec2) -> bool {
         let line_direction = line_end - line_start;
-        let line_normal = Self::vector_normal(line_direction);
+        let line_normal = gears::vector_normal(line_direction);
         let ap = point - line_start;
 
         let distance = line_normal.dot(ap);
@@ -369,7 +385,7 @@ impl MumperPhysics {
         return distance <= thickness;
     }
 
-    // Get the vector between a point and its projection on an edge (limited size)
+    // Get the vector between a point and its projection on an edge (finite)
     pub fn edge_to_point(line_start: Vec2, line_end: Vec2, point: Vec2) -> Vec2 {
         let ab = line_end - line_start;
         let ap = point - line_start;

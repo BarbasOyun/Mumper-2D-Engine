@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 use mumper::Mumper;
+use mumper::MumperRenderer;
 use mumper::MumperECS;
-use mumper::MumperState;
 use mumper::gears;
 
 use eframe::{CreationContext, egui::*};
@@ -103,7 +103,7 @@ impl MumperDemo {
         let settings = DemoSettings::new();
         let mut mumper: Mumper = Mumper::new(cc);
 
-        Self::default_scene(&mut mumper.state);
+        Self::default_scene(&mut mumper);
 
         return Self { mumper, settings };
     }
@@ -115,7 +115,7 @@ impl MumperDemo {
 
     fn reset_scene(&mut self) {
         self.mumper.clear_scene();
-        Self::default_scene(&mut self.mumper.state);
+        Self::default_scene(&mut self.mumper);
     }
 
     fn input_handling(&mut self, response: Response, input_state: &InputState) {
@@ -131,11 +131,11 @@ impl MumperDemo {
 
         // Input Reaction
         let settings = &mut self.settings;
-        let state = &mut self.mumper.state;
+        let state = &mut self.mumper;
 
         // LClick = Create Polygon
         if lclick_released && response.hovered() {
-            let world_pos = state.screen_to_world(global_pointer_position);
+            let world_pos = MumperRenderer::screen_to_world(&state.renderer, global_pointer_position);
 
             let radius = settings.radius;
             let segments = settings.segments;
@@ -211,13 +211,12 @@ impl MumperDemo {
                 self.reset_scene();
             }
 
-            let mumper_settings = &mut self.mumper.settings;
-            let state = &mut self.mumper.state;
+            let state = &mut self.mumper;
 
             ui.label("Zoom :");
             ui.add(egui::Slider::new(
-                &mut state.ppm,
-                mumper_settings.min_ppm..=mumper_settings.max_ppm,
+                &mut state.renderer.ppm,
+                state.settings.min_ppm..=state.settings.max_ppm,
             ));
 
             let mut local_pause = state.is_paused.load(Ordering::Relaxed);
@@ -226,11 +225,11 @@ impl MumperDemo {
                 state.pause_physic(local_pause);
             }
 
-            ui.checkbox(&mut mumper_settings.default_transform, "Default Transform");
+            ui.checkbox(&mut state.settings.default_transform, "Default Transform");
         });
     }
 
-    fn default_scene(state: &mut MumperState) {
+    fn default_scene(state: &mut Mumper) {
         // Default Scene
         let (
             radiuses,
@@ -349,7 +348,7 @@ impl eframe::App for MumperDemo {
             self.mumper.hud(fps);
 
             // Mumper Rendering
-            let response = self.mumper.rendering(ui);
+            let response = self.mumper.game_update(ui);
 
             // Inputs
             ui.input(|input_state: &InputState| {
