@@ -27,8 +27,7 @@ pub struct Mumper {
 
 impl Mumper {
     pub fn new(cc: &CreationContext) -> Self {
-        let physics: Arc<Mutex<MumperPhysics>> =
-            Arc::new(Mutex::new(MumperPhysics::new()));
+        let physics: Arc<Mutex<MumperPhysics>> = Arc::new(Mutex::new(MumperPhysics::new()));
 
         let is_paused: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 
@@ -51,7 +50,7 @@ impl Mumper {
     }
 
     pub fn clear_scene(&mut self) {
-        MumperECS::clear_entities(&mut self.ecs);
+        MumperECS::clear_entities(self);
     }
 
     // UPDATE
@@ -149,6 +148,8 @@ impl Mumper {
         let physics_thread = Arc::clone(physics);
         let is_paused_thread = Arc::clone(is_paused);
 
+        // TODO : Common Physic Data Buffer
+
         #[cfg(not(target_arch = "wasm32"))] // Spawn Thread on Desktop only
         thread::spawn(move || {
             let mut last_tick = Instant::now();
@@ -183,7 +184,9 @@ impl Mumper {
     pub fn create_shape(
         &mut self,
         vertices: Vec<Vec2>,
+        is_radius: bool,
         radius: f32,
+        thickness: f32,
         position: Vec2,
         rotation: f32,
         scale: Vec2,
@@ -193,7 +196,19 @@ impl Mumper {
         stroke: Stroke,
     ) {
         // println!("Create Shape at : {position}");
-        MumperECS::create_physics_entity(self, position, rotation, scale, vertices, radius, velocity, rotation_speed, bounciness);
+        let entity_id = MumperECS::create_physics_entity(
+            self,
+            position,
+            rotation,
+            scale,
+            vertices,
+            is_radius,
+            radius,
+            thickness,
+            velocity,
+            rotation_speed,
+            bounciness,
+        );
 
         // self.default_positions.push(position.clone());
         // self.default_rotations.push(rotation.clone());
@@ -222,7 +237,10 @@ impl Mumper {
         //     physics.bounciness.push(bounciness);
         // };
 
-        self.renderer.strokes.push(stroke);
+        self.renderer
+            .shape_renderer_storage
+            .add(entity_id, vec![], stroke);
+        //self.renderer.strokes.push(stroke);
     }
 }
 

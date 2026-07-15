@@ -1,10 +1,21 @@
-use eframe::{CreationContext, egui::*};
+use eframe::egui::*;
 use glam::Vec2;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 
 use crate::Mumper;
-use crate::MumperPhysics;
 use crate::gears;
+use crate::mumper_ecs::*;
+
+// TODO : Double-Buffered State
+// use components?
+// pub struct PhysicsStateUpdate {
+//     pub entity_id: u32,
+//     pub position: Vec2,
+//     pub rotation: f32,
+// }
+
+// // Wrap a vector of these updates in an Arc<Mutex>
+// pub type SharedPhysicsBuffer = Arc<Mutex<Vec<PhysicsStateUpdate>>>;
 
 pub struct MumperRenderer {
     // View
@@ -17,20 +28,14 @@ pub struct MumperRenderer {
     pub camera_size_x: f32,
     pub camera_size_y: f32,
     // Entities Rendering
-    pub calculated_vertices: Vec<Vec<Vec2>>,
-    pub edge_normals: Vec<Vec<Vec2>>,
-    pub strokes: Vec<Stroke>,
+    pub shape_renderer_storage: ShapeRendererStorage,
+    pub normals_renderer_storage: NormalsRendererStorage,
 }
 
 impl MumperRenderer {
     pub fn new(viewport: Rect, viewport_painter: Painter) -> Self {
-        // let mut calculated_vertices = vec![];
-        // let mut edge_normals = vec![];
-
-        // for _ in 0..vertices.len() {
-        //     calculated_vertices.push(vec![]);
-        //     edge_normals.push(vec![]);
-        // }
+        let shape_renderer_storage = ShapeRendererStorage::new();
+        let normals_renderer_storage = NormalsRendererStorage::new();
 
         Self {
             // View
@@ -43,9 +48,8 @@ impl MumperRenderer {
             camera_size_x: 4.0,
             camera_size_y: 4.0,
             // Entities Rendering
-            calculated_vertices: vec![],
-            edge_normals: vec![],
-            strokes: vec![],
+            shape_renderer_storage,
+            normals_renderer_storage,
         }
     }
 
@@ -82,16 +86,19 @@ impl MumperRenderer {
         'get_physics_data: {
             let physics = state.physics.lock().unwrap();
 
-            // TODO : Double-Buffered State
-            // TODO : Get Transforms + calculated_vertices from physics
-
             // if is_physics_paused && settings.default_transform {
             //     self.calculated_vertices = physics.vertices.clone();
             //     break 'get_physics_data;
             // }
 
-            state.renderer.calculated_vertices = physics.calculated_vertices.clone();
+            // Get calculated_vertices
+            state.renderer.shape_renderer_storage.calculated_vertices =
+                physics.shape_storage.calculated_vertices.clone();
+            
+            // Get Normals
+            state.renderer.normals_renderer_storage = physics.normals_renderer_storage.clone();
 
+            // Get Transform
             state.ecs.transform_storage = physics.transform_storage.clone();
         };
 
@@ -101,24 +108,16 @@ impl MumperRenderer {
             Self::draw_normals(&state.renderer);
         }
 
-        // Render Shapes
-        for i in 0..state.renderer.calculated_vertices.len() {
-            // if is_physics_paused && settings.default_transform {
-            //     let default_image = MumperPhysics::image_vertices(
-            //         self.default_positions[i],
-            //         self.default_rotations[i],
-            //         self.default_scales[i],
-            //         &self.calculated_vertices[i],
-            //     );
+        Self::render_shape_components_logic(state);
+    }
 
-            //     self.render_shape(&default_image, self.strokes[i]);
-            //     continue;
-            // }
-
+    fn render_shape_components_logic(state: &mut Mumper) {
+        // Render Shape Component Logic
+        for i in 0..state.renderer.shape_renderer_storage.entities.len() {
             Self::render_shape(
                 &state.renderer,
-                &state.renderer.calculated_vertices[i],
-                state.renderer.strokes[i],
+                &state.renderer.shape_renderer_storage.calculated_vertices[i],
+                state.renderer.shape_renderer_storage.strokes[i],
             );
         }
     }
@@ -133,8 +132,8 @@ impl MumperRenderer {
 
             // println!("Vertex = {start_world_pos}");
 
-            let start_pos = Self::world_to_screen(&renderer, start_world_pos);
-            let end_pos = Self::world_to_screen(&renderer, end_world_pos);
+            let start_pos = Self::world_to_screen(&renderer, &start_world_pos);
+            let end_pos = Self::world_to_screen(&renderer, &end_world_pos);
 
             // draw_edge
             renderer
@@ -145,16 +144,19 @@ impl MumperRenderer {
 
     pub fn render_vector(renderer: &MumperRenderer, origin: Vec2, vector: Vec2, stroke: Stroke) {
         // TODO
-        let start_pos = Self::world_to_screen(&renderer, origin);
-        let end_pos = Self::world_to_screen(&renderer, origin + vector);
+        let start_pos = Self::world_to_screen(&renderer, &origin);
+        let end_world_pos = origin + vector;
+        let end_pos = Self::world_to_screen(&renderer, &end_world_pos);
 
         // Draw segment
-        renderer.viewport_painter
+        renderer
+            .viewport_painter
             .line_segment([start_pos, end_pos], stroke);
 
         // Draw vector head
         let vector_head = Rect::from_center_size(end_pos, vec2(10.0, 10.0));
-        renderer.viewport_painter
+        renderer
+            .viewport_painter
             .rect_filled(vector_head, 0.0, stroke.color);
     }
 
@@ -177,30 +179,14 @@ impl MumperRenderer {
     }
 
     pub fn draw_normals(renderer: &MumperRenderer) {
-        for i in 0..renderer.calculated_vertices.len() {
-            let vertices = &renderer.calculated_vertices[i];
-
-            // for each object's vertices
-            for j in 0..vertices.len() {
-                if i >= vertices.len() {
-                    continue;
-                }
-
-                let vertex: Vec2 = vertices[j];
-
-                // Edge normals
-                let next_index = (j + 1) % vertices.len();
-                let next_vertex = vertices[next_index];
-
-                let edge_vector = next_vertex - vertex;
-                let edge_normal = gears::vector_normal(edge_vector);
-
-                let normal_pos = gears::get_average_point(vertex, next_vertex);
-
+        // foreach entity
+        for i in 0..renderer.normals_renderer_storage.entities.len() {
+            // foreach segment
+            for j in 0..renderer.normals_renderer_storage.normal_pos[i].len() {
                 Self::render_vector(
                     renderer,
-                    normal_pos,
-                    edge_normal,
+                    renderer.normals_renderer_storage.normal_pos[i][j],
+                    renderer.normals_renderer_storage.edge_normals[i][j],
                     Stroke::new(1.0, egui::Color32::LIGHT_BLUE),
                 );
             }
@@ -217,7 +203,7 @@ impl MumperRenderer {
     // 1) world_to_screen
     // let camera_left = camera_position - camera_size_x / 2;
     // let object_viewport_position_x = (-1 * camera_left + world_pos.x) / camera_size_x;
-    pub fn world_to_screen(renderer: &MumperRenderer, world_pos: glam::Vec2) -> Pos2 {
+    pub fn world_to_screen(renderer: &MumperRenderer, world_pos: &glam::Vec2) -> Pos2 {
         let camera_position = renderer.camera_position;
         let camera_size_x = renderer.camera_size_x;
         let camera_size_y = renderer.camera_size_y;
@@ -236,7 +222,7 @@ impl MumperRenderer {
         return screen_pos;
     }
 
-    pub fn screen_to_world(renderer: &MumperRenderer, screen_pos: Pos2) -> Vec2 {
+    pub fn screen_to_world(renderer: &MumperRenderer, screen_pos: &Pos2) -> Vec2 {
         let camera_position = renderer.camera_position;
 
         let camera_left = camera_position.x - renderer.camera_size_x / 2.0;

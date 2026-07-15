@@ -7,10 +7,12 @@
 // define CustomComponents
 
 // TODO :
+// Archetype ECS -> Group Entities by Archetype, Archetype = Entities with the same Components
 // Impl Component Trait in macro
 // define_components! macro
 // remove_entity! macro -> make a function that remove entity's CustomComponents
 
+use eframe::egui::*;
 use glam::Vec2;
 
 use crate::Mumper;
@@ -21,26 +23,33 @@ pub struct MumperECS {
     // versions: Vec<u32>,
     entities_bitmask: Vec<u64>, // Avoid checking if every ComponentStorage have an entity on Removing it
 
-    // Components
-    // renderer_storage
-    // Physics
+    pub default_transforms: TransformStorage,
+    // Physics Components (Shared with physics)
     pub transform_storage: TransformStorage,
+
     pub radius_collider_storage: RadiusColliderStorage,
-    // pub segments_collider_storage: RadiusColliderStorage,
-    // Rigid bodies,
+    pub segments_collider_storage: SegmentColliderStorage,
+    pub rigidbody_storage: RigidbodyStorage,
 }
 
 impl MumperECS {
     pub fn new() -> Self {
         // Components
+        let default_transforms = TransformStorage::new();
         let transform_storage = TransformStorage::new();
+
         let radius_collider_storage = RadiusColliderStorage::new();
+        let segments_collider_storage = SegmentColliderStorage::new();
+        let rigidbody_storage = RigidbodyStorage::new();
 
         Self {
             entity_ids: vec![],
             entities_bitmask: vec![],
+            default_transforms,
             transform_storage,
             radius_collider_storage,
+            segments_collider_storage,
+            rigidbody_storage,
         }
     }
 
@@ -75,7 +84,9 @@ impl MumperECS {
         scale: Vec2,
         vertices: Vec<Vec2>,
         // Collider
+        is_radius: bool,
         radius: f32,
+        thickness: f32,
         // Rigidbody
         velocity: Vec2,
         rotation_speed: f32,
@@ -84,13 +95,15 @@ impl MumperECS {
         // Create Entity
         let entity_id = Self::create_entity(&mut state.ecs.entity_ids);
 
-        let ecs = &mut state.ecs;
+        // Add ECS Components
+        // let ecs = &mut state.ecs;
 
-        // ECS Components
-        ecs.transform_storage
-            .add(entity_id, position, rotation, scale);
+        // Transform
+        // ecs.transform_storage
+        //     .add(entity_id, position, rotation, scale);
 
-        ecs.radius_collider_storage.add(entity_id, radius);
+        // Radius Collider
+        // ecs.radius_collider_storage.add(entity_id, radius);
 
         let default_image = MumperPhysics::image_vertices(
             position.clone(),
@@ -104,21 +117,30 @@ impl MumperECS {
             let mut physics = state.physics.lock().unwrap();
 
             // Add Physics Components
+            // Transform
             physics
                 .transform_storage
                 .add(entity_id, position, rotation, scale);
 
-            physics.radius_collider_storage.add(entity_id, radius);
+            // Collider
+            if is_radius {
+                physics.radius_collider_storage.add(entity_id, radius);
+            } else {
+                physics.segments_collider_storage.add(entity_id, thickness);
+            }
 
-            // Entity
-            physics.vertices.push(vertices);
-            physics.edge_normals.push(vec![]);
-            physics.calculated_vertices.push(default_image);
+            // Render Data
+            physics
+                .shape_storage
+                .add(entity_id, vertices, default_image);
+            physics
+                .normals_renderer_storage
+                .add(entity_id, vec![], vec![]);
 
             // Rigidbody
-            physics.velocities.push(velocity);
-            physics.rotation_speeds.push(rotation_speed);
-            physics.bounciness.push(bounciness);
+            physics
+                .rigidbody_storage
+                .add(entity_id, velocity, rotation_speed, bounciness);
         };
 
         return entity_id;
@@ -151,9 +173,22 @@ impl MumperECS {
         ecs.entity_ids.remove(entity_id as usize);
     }
 
-    pub fn clear_entities(ecs: &mut MumperECS) {
+    pub fn clear_entities(state: &mut Mumper) {
+        let ecs = &mut state.ecs;
+
         for i in 0..ecs.entity_ids.len() {
             Self::remove_entity(ecs, i as u32);
+        }
+
+        // clear physics components
+        {
+            let mut physics = state.physics.lock().unwrap();
+
+            physics.transform_storage.clear_components();
+            physics.shape_storage.clear_components();
+            physics.radius_collider_storage.clear_components();
+            physics.segments_collider_storage.clear_components();
+            physics.rigidbody_storage.clear_components();
         }
     }
 
@@ -224,8 +259,21 @@ pub trait Component {
 component_storage!(
     struct ShapeRendererStorage {
         // TODO : Flatten
+        calculated_vertices: Vec<Vec2>,
+        strokes: Stroke,
+    }
+);
+
+component_storage!(
+    struct PhysicsShapeStorage {
         vertices: Vec<Vec2>,
         calculated_vertices: Vec<Vec2>,
+    }
+);
+
+component_storage!(
+    struct NormalsRendererStorage {
+        normal_pos: Vec<Vec2>,
         edge_normals: Vec<Vec2>,
     }
 );
@@ -260,6 +308,7 @@ component_storage!(
 
 component_storage!(
     struct RigidbodyStorage {
+        // Mass,
         velocities: Vec2, // meters / sec
         rotation_speeds: f32,
         bounciness: f32,
@@ -294,6 +343,8 @@ macro_rules! component_storage {
                 }
             }
 
+            // Add Component
+
             pub fn add(&mut self, entity_id: u32, $($field_name: $field_type),+) {
                 let dense_idx = self.entities.len();
 
@@ -307,6 +358,8 @@ macro_rules! component_storage {
                 // Push custom vectors
                 $( self.$field_name.push($field_name); )+
             }
+
+            // Use Component
 
             pub fn get_component(&self, entity_id: u32) -> ($( &$field_type ),+) {
                 let component_id = self.sparse[entity_id as usize];
@@ -322,6 +375,8 @@ macro_rules! component_storage {
                     action(entity_id, $( &mut self.$field_name[i] ),+)
                 }
             }
+
+            // Remove Component
 
             pub fn remove(&mut self, entity_id: u32) {
                 let ent_id = entity_id as usize;
@@ -349,6 +404,13 @@ macro_rules! component_storage {
                 self.sparse[ent_id] = usize::MAX;
                 self.entities.pop();
                 $( self.$field_name.pop(); )+
+            }
+
+            pub fn clear_components(&mut self) {
+                self.sparse.clear();
+                self.entities.clear();
+
+                $( self.$field_name.clear(); )+
             }
         }
     };

@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 use mumper::Mumper;
-use mumper::MumperRenderer;
 use mumper::MumperECS;
+use mumper::MumperRenderer;
 use mumper::gears;
 
 use eframe::{CreationContext, egui::*};
@@ -130,29 +130,37 @@ impl MumperDemo {
         }
 
         // Input Reaction
-        let settings = &mut self.settings;
-        let state = &mut self.mumper;
 
         // LClick = Create Polygon
         if lclick_released && response.hovered() {
-            let world_pos = MumperRenderer::screen_to_world(&state.renderer, global_pointer_position);
-
-            let radius = settings.radius;
-            let segments = settings.segments;
-            let vertices = gears::circle_vertices(radius, segments);
-
-            state.create_shape(
-                vertices,
-                radius,
-                world_pos,
-                0.0,
-                Vec2::ONE,
-                settings.polygon_velocity,
-                -1.0,
-                1.0,
-                Stroke::new(settings.stroke_width, settings.stroke_color),
-            );
+            self.create_shape(&global_pointer_position);
         }
+    }
+
+    fn create_shape(&mut self, screen_pos: &Pos2) {
+        let state = &mut self.mumper;
+        let settings = &mut self.settings;
+
+        let world_pos = MumperRenderer::screen_to_world(&state.renderer, screen_pos);
+        // let world_pos = MumperRenderer::screen_to_world(&state.renderer, global_pointer_position);
+
+        let radius = settings.radius;
+        let segments = settings.segments;
+        let vertices = gears::circle_vertices(radius, segments);
+
+        state.create_shape(
+            vertices,
+            true,
+            radius,
+            0.1,
+            world_pos,
+            0.0,
+            Vec2::ONE,
+            settings.polygon_velocity,
+            -1.0,
+            1.0,
+            Stroke::new(settings.stroke_width, settings.stroke_color),
+        );
     }
 
     // UI COMPONENTS
@@ -246,7 +254,9 @@ impl MumperDemo {
         for i in 0..radiuses.len() {
             state.create_shape(
                 vertices[i].clone(),
+                true,
                 radiuses[i],
+                0.1,
                 positions[i],
                 rotations[i],
                 scales[i],
