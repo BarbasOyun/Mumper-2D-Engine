@@ -104,9 +104,20 @@ impl Mumper {
             egui::Color32::WHITE,
         );
 
-        // Controls Display
+        // Entities Count Display
+        let entities_count = self.ecs.entity_ids.len();
+
         painter.text(
             renderer.viewport.left_top() + egui::vec2(10.0, 30.0),
+            egui::Align2::LEFT_TOP,
+            format!("Entities: {}", entities_count),
+            egui::FontId::proportional(14.0),
+            egui::Color32::WHITE,
+        );
+
+        // Controls Display
+        painter.text(
+            renderer.viewport.left_top() + egui::vec2(10.0, 50.0),
             egui::Align2::LEFT_TOP,
             "Look : Right Click",
             egui::FontId::proportional(14.0),

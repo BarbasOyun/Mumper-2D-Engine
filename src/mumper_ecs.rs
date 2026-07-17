@@ -19,7 +19,7 @@ use crate::Mumper;
 use crate::MumperPhysics;
 
 pub struct MumperECS {
-    pub entity_ids: Vec<u32>,
+    pub entity_ids: Vec<u32>, // TODO : usize
     // versions: Vec<u32>,
     entities_bitmask: Vec<u64>, // Avoid checking if every ComponentStorage have an entity on Removing it
 
@@ -179,23 +179,14 @@ impl MumperECS {
         for i in 0..ecs.entity_ids.len() {
             Self::remove_entity(ecs, i as u32);
         }
-
-        // clear physics components
-        {
-            let mut physics = state.physics.lock().unwrap();
-
-            physics.transform_storage.clear_components();
-            physics.shape_storage.clear_components();
-            physics.radius_collider_storage.clear_components();
-            physics.segments_collider_storage.clear_components();
-            physics.rigidbody_storage.clear_components();
-        }
     }
 
     // COMPONENTS
 
-    pub fn add_comp(ecs: &mut MumperECS, entity_id: u32, component_type: ComponentType) {
+    pub fn add_comp(state: &mut Mumper, entity_id: u32, component_type: ComponentType) {
+        let ecs = &mut state.ecs;
         let ent_id = entity_id as usize;
+
         if ent_id >= ecs.entities_bitmask.len() {
             return;
         }
@@ -203,15 +194,30 @@ impl MumperECS {
         let mask = ecs.entities_bitmask[ent_id];
 
         // Bitwise operation
+        if component_type as u8 == 0 {
+            // Self::add_component(entity_id, &mut ecs.transform_storage);
+        }
     }
 
-    pub fn add_component<T: Component>(entity_id: u32, component: &mut T) {
+    pub fn remove_comp(state: &mut Mumper, entity_id: u32, component_type: ComponentType) {
+        let ecs = &mut state.ecs;
+        let ent_id = entity_id as usize;
+
+        if ent_id >= ecs.entities_bitmask.len() {
+            return;
+        }
+
+        let mask = ecs.entities_bitmask[ent_id];
+
+        // Bitwise operation
+        if component_type as u8 == 0 {
+            // Self::remove_component(entity_id, &mut ecs.transform_storage);
+        }
+    }
+
+    pub fn add_component<T: Component>(state: &mut Mumper, entity_id: u32, component: &mut T) {
         component.add_default(entity_id);
         // Update entities_bitmask
-    }
-
-    pub fn get_component_id<T: Component>(entity_id: u32, component: T) -> u32 {
-        return component.get_component_id(entity_id);
     }
 
     pub fn remove_component<T: Component>(entity_id: u32, component: &mut T) {
@@ -221,7 +227,7 @@ impl MumperECS {
 
     // Create a pool of Entities -> Object Pooling
     pub fn create_pool() {
-        // TODO
+        todo!()
     }
 }
 
@@ -241,13 +247,12 @@ impl ComponentType {
     }
 }
 
+// Allow custom components
 pub trait Component {
     const TYPE: ComponentType;
 
     // Add component with default values
     fn add_default(&mut self, entity_id: u32);
-
-    fn get_component_id(&self, entity_id: u32) -> u32;
 
     fn remove(&mut self, entity_id: u32);
 }
@@ -261,6 +266,13 @@ component_storage!(
         // TODO : Flatten
         calculated_vertices: Vec<Vec2>,
         strokes: Stroke,
+    },
+    ComponentType::Transform,
+    {
+        self.add
+    },
+    {
+
     }
 );
 
@@ -297,12 +309,14 @@ component_storage!(
 component_storage!(
     struct RadiusColliderStorage {
         radiuses: f32,
+        // is_trigger: bool,
     }
 );
 
 component_storage!(
     struct SegmentColliderStorage {
         edge_thicknesses: f32,
+        // is_trigger: bool,
     }
 );
 
@@ -321,7 +335,12 @@ macro_rules! component_storage {
     (
         struct $storage_name:ident {
             $($field_name:ident : $field_type:ty),+ $(,)? // TODO : Default Values
-        }
+        },
+
+        $component_type:expr,
+        $add_default:block,
+
+        $remove:block
     ) => {
         #[derive(Clone)]
         pub struct $storage_name {
@@ -331,6 +350,14 @@ macro_rules! component_storage {
 
             // Custom vectors
             $( pub $field_name: Vec<$field_type>, )+
+        }
+
+        impl Component for $storage_name {
+            const TYPE: ComponentType = $component_type
+
+            fn add_default(&mut self, entity_id: u32) $add_default:block
+
+            fn remove(&mut self, entity_id: u32) $remove:block
         }
 
         // TODO impl Component for $storage_name
@@ -361,10 +388,16 @@ macro_rules! component_storage {
 
             // Use Component
 
-            pub fn get_component(&self, entity_id: u32) -> ($( &$field_type ),+) {
-                let component_id = self.sparse[entity_id as usize];
+            pub fn get_component(&self, entity_id: &u32) -> ($( &$field_type ),+) {
+                let component_id = self.sparse[*entity_id as usize];
 
                 return ($( &self.$field_name[component_id] ),+);
+            }
+
+            pub fn get_mut_component(&mut self, entity_id: &u32) -> ($( &mut $field_type ),+) {
+                let component_id = self.sparse[*entity_id as usize];
+
+                return ($( &mut self.$field_name[component_id] ),+);
             }
 
             pub fn iterate_over_components<F: FnMut(u32, $( &mut $field_type ),+)>(&mut self, mut action: F) {

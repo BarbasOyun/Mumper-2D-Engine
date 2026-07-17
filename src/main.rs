@@ -90,7 +90,8 @@ impl DemoSettings {
     }
 }
 
-// How to deal with demo state? eg score
+// TODO : Oscillating Color Component
+
 struct MumperDemo {
     // Mumper Implementation
     mumper: Mumper,
@@ -239,6 +240,30 @@ impl MumperDemo {
 
     fn default_scene(state: &mut Mumper) {
         // Default Scene
+
+        // Square
+        let square_vertices: Vec<Vec2> = vec![
+            Vec2::new(10.0, -10.0),
+            Vec2::new(10.0, 10.0),
+            Vec2::new(-10.0, 10.0),
+            Vec2::new(-10.0, -10.0),
+        ];
+
+        state.create_shape(
+            square_vertices,
+            false,
+            0.0,
+            0.1,
+            Vec2::ZERO,
+            0.785,
+            Vec2::ONE,
+            Vec2::ZERO,
+            0.0,
+            0.0,
+            Stroke::new(5.0, Color32::LIGHT_YELLOW),
+        );
+
+        // 3 Circles
         let (
             radiuses,
             vertices,
@@ -280,23 +305,14 @@ impl MumperDemo {
         Vec<f32>,
         Vec<Stroke>,
     ) {
-        let radiuses: Vec<f32> = vec![0.0, 1.0, 1.5, 2.0];
+        let radiuses: Vec<f32> = vec![1.0, 1.5, 2.0];
 
         // Vertices
-        // Square
-        let square_vertices: Vec<Vec2> = vec![
-            Vec2::new(10.0, -10.0),
-            Vec2::new(10.0, 10.0),
-            Vec2::new(-10.0, 10.0),
-            Vec2::new(-10.0, -10.0),
-        ];
-
-        let circle_vertices1 = gears::circle_vertices(radiuses[1], 20);
-        let circle_vertices2 = gears::circle_vertices(radiuses[2], 20);
-        let circle_vertices3 = gears::circle_vertices(radiuses[3], 20);
+        let circle_vertices1 = gears::circle_vertices(radiuses[0], 20);
+        let circle_vertices2 = gears::circle_vertices(radiuses[1], 20);
+        let circle_vertices3 = gears::circle_vertices(radiuses[2], 20);
 
         let vertices: Vec<Vec<Vec2>> = vec![
-            square_vertices,
             circle_vertices1,
             circle_vertices2,
             circle_vertices3,
@@ -304,30 +320,27 @@ impl MumperDemo {
 
         // Transforms
         let positions: Vec<Vec2> = vec![
-            Vec2::ZERO,
             Vec2::new(1.0, 1.0),
             Vec2::new(1.5, 1.0),
             Vec2::new(2.0, 1.0),
         ];
 
-        let rotations: Vec<f32> = vec![0.785, 0.0, 0.0, 0.0];
-        let scales: Vec<Vec2> = vec![Vec2::ONE, Vec2::ONE, Vec2::ONE, Vec2::ONE];
+        let rotations: Vec<f32> = vec![0.0, 0.0, 0.0];
+        let scales: Vec<Vec2> = vec![Vec2::ONE, Vec2::ONE, Vec2::ONE];
 
         let velocities: Vec<Vec2> = vec![
-            Vec2::ZERO,
             Vec2::new(1.0, 0.0),
             Vec2::new(1.0, 1.0),
             Vec2::new(-1.0, -1.0),
         ];
 
-        let rotation_speeds: Vec<f32> = vec![0.0, 1.0, -1.5, 0.5];
+        let rotation_speeds: Vec<f32> = vec![1.0, -1.5, 0.5];
 
         // Rigid body
-        let bounciness: Vec<f32> = vec![0.0, 1.0, 0.9, 0.5];
+        let bounciness: Vec<f32> = vec![1.0, 0.9, 0.5];
 
         // Rendering
         let strokes: Vec<Stroke> = vec![
-            Stroke::new(5.0, Color32::LIGHT_YELLOW),
             Stroke::new(2.0, Color32::RED),
             Stroke::new(2.0, Color32::GREEN),
             Stroke::new(2.0, Color32::BLUE),

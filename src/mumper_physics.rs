@@ -56,59 +56,66 @@ impl MumperPhysics {
 
         let square_lines_thickness = 0.1;
 
-        // Collisions
-        let mut object_collisions1: Vec<usize> = vec![]; // Objects Index
-        let mut object_collisions2: Vec<usize> = vec![];
-        let mut collisions_normals: Vec<Vec2> = vec![];
-        let mut collisions_penetration_depth: Vec<f32> = vec![];
+        // Rigidbody / Rigidbody Collisions
+        let mut rr_collisions1: Vec<usize> = vec![]; // entity_id
+        let mut rr_collisions2: Vec<usize> = vec![];
+        let mut rr_collisions_normals: Vec<Vec2> = vec![];
+        let mut rr_collisions_penetration_depth: Vec<f32> = vec![];
+
+        // Rigidbody / Static Collisions
+        let mut rs_collisions1: Vec<usize> = vec![];
+        let mut rs_collisions2: Vec<usize> = vec![];
+        let mut rs_collisions_normals: Vec<Vec2> = vec![];
+        let mut rs_collisions_penetration_depth: Vec<f32> = vec![];
 
         self.shape_components_logic();
         self.normal_components_logic();
+
         self.radius_collider_components_logic(
-            &mut object_collisions1,
-            &mut object_collisions2,
-            &mut collisions_normals,
-            &mut collisions_penetration_depth,
+            &mut rr_collisions1,
+            &mut rr_collisions2,
+            &mut rr_collisions_normals,
+            &mut rr_collisions_penetration_depth,
+            &mut rs_collisions1,
+            &mut rs_collisions2,
+            &mut rs_collisions_normals,
+            &mut rs_collisions_penetration_depth,
         );
+        // segment_collider_components_logic();
+        self.rigidbody_component_logic(dt);
 
         // for each Entity
-        for i in 0..self.transform_storage.entities.len() {
-            // Entity properties
-            let rotation = &mut self.transform_storage.rotations[i];
+        // for i in 0..self.transform_storage.entities.len() {
+        //     // Entity properties
+        //     // Rigidbody
+        //     let velocity = &mut self.rigidbody_storage.velocities[i];
+        //     let bounciness = &self.rigidbody_storage.bounciness[i];
 
-            // Rigidbody
-            let velocity = &mut self.rigidbody_storage.velocities[i];
-            let rotation_speed = &mut self.rigidbody_storage.rotation_speeds[i];
-            let bounciness = &self.rigidbody_storage.bounciness[i];
-
-            // 1] Transform
-            Self::transform(
-                &dt,
-                &mut self.transform_storage.positions[i],
-                velocity,
-                rotation,
-                rotation_speed,
-            );
-
-            // 4] Collisions
-            // Walls Collisions
-            let square = &self.shape_storage.calculated_vertices[0];
-            Self::wall_collisions(
-                &mut self.radius_collider_storage.radiuses[i],
-                &mut self.transform_storage.positions[i],
-                velocity,
-                bounciness,
-                square,
-                &square_lines_thickness,
-            );
-        }
+        //     // 4] Collisions
+        //     // Walls Collisions
+        //     let square = &self.shape_storage.calculated_vertices[0];
+        //     Self::wall_collisions(
+        //         &mut self.radius_collider_storage.radiuses[i],
+        //         &mut self.transform_storage.positions[i],
+        //         velocity,
+        //         bounciness,
+        //         square,
+        //         &square_lines_thickness,
+        //     );
+        // }
 
         // 2] Solve Collisions
+        self.rs_collisions_solver(
+            &mut rs_collisions1,
+            &mut rs_collisions_normals,
+            &mut rs_collisions_penetration_depth,
+        );
+
         self.collision_solver(
-            &mut object_collisions1,
-            &mut object_collisions2,
-            &mut collisions_normals,
-            &mut collisions_penetration_depth,
+            &mut rr_collisions1,
+            &mut rr_collisions2,
+            &mut rr_collisions_normals,
+            &mut rr_collisions_penetration_depth,
         );
     }
 
@@ -117,7 +124,7 @@ impl MumperPhysics {
         for i in 0..self.shape_storage.entities.len() {
             // Get transform
             let entity_id = self.shape_storage.entities[i];
-            let (position, rotation, scale) = self.transform_storage.get_component(entity_id);
+            let (position, rotation, scale) = self.transform_storage.get_component(&entity_id);
 
             let calculated_vertices = Self::image_vertices(
                 *position,
@@ -135,7 +142,7 @@ impl MumperPhysics {
         for i in 0..self.normals_renderer_storage.entities.len() {
             // Get Calculated Vertices
             let entity_id = self.normals_renderer_storage.entities[i];
-            let (vertices, calculated_vertices) = self.shape_storage.get_component(entity_id);
+            let (vertices, calculated_vertices) = self.shape_storage.get_component(&entity_id);
 
             let (normal_pos, segments_normals) = Self::edges_normal(calculated_vertices);
 
@@ -258,10 +265,14 @@ impl MumperPhysics {
 
     fn radius_collider_components_logic(
         &mut self,
-        object_collisions1: &mut Vec<usize>,
-        object_collisions2: &mut Vec<usize>,
-        collisions_normals: &mut Vec<Vec2>,
-        collisions_penetration_depth: &mut Vec<f32>,
+        rr_collisions1: &mut Vec<usize>,
+        rr_collisions2: &mut Vec<usize>,
+        rr_collisions_normals: &mut Vec<Vec2>,
+        rr_collisions_penetration_depth: &mut Vec<f32>,
+        rs_collisions1: &mut Vec<usize>,
+        rs_collisions2: &mut Vec<usize>,
+        rs_collisions_normals: &mut Vec<Vec2>,
+        rs_collisions_penetration_depth: &mut Vec<f32>,
     ) {
         // foreach entities with Circle Collider Component
         // TODO : use iterate_over_component
@@ -275,15 +286,31 @@ impl MumperPhysics {
 
             // Current Entity Circle
             let entity_id = self.radius_collider_storage.entities[i] as usize;
-            let entity_pos = self.transform_storage.positions[entity_id];
-            let entity_radius = self.radius_collider_storage.radiuses[entity_id];
 
+            let entity_radius = self.radius_collider_storage.radiuses[i];
+            let (position, _rotation, _scale) = self.transform_storage.get_component(&(entity_id as u32));
+
+            let is_rigidbody = self
+                .rigidbody_storage
+                .entities
+                .contains(&(entity_id as u32));
+
+            // TODO : Optimize
+            // Ignore already detected collision
+            // If this entity collided with another -> Ignore this other Entity
             let mut ignore_list: Vec<usize> = vec![]; // Indexes already captured
 
-            // Ignore already detected collision
-            for j in 0..object_collisions2.len() {
-                if object_collisions2[j] == entity_id {
-                    ignore_list.push(object_collisions1[j]);
+            if is_rigidbody {
+                for j in 0..rr_collisions2.len() {
+                    if rr_collisions2[j] == entity_id {
+                        ignore_list.push(rr_collisions1[j]);
+                    }
+                }
+            } else {
+                for j in 0..rs_collisions1.len() {
+                    if rs_collisions2[j] == entity_id {
+                        ignore_list.push(rs_collisions1[j]);
+                    }
                 }
             }
 
@@ -298,12 +325,12 @@ impl MumperPhysics {
                 let other_entity_id = self.transform_storage.entities[j] as usize;
 
                 // Other Entity Circle
-                let pos2 = self.transform_storage.positions[other_entity_id];
+                let (other_position, _other_rotation, _other_scale) = self.transform_storage.get_component(&(entity_id as u32));
 
                 let (collision_normal, penetration_depth) = Self::circle_circle_collision_detection(
-                    &entity_pos,
+                    &position,
                     &entity_radius,
-                    &pos2,
+                    &other_position,
                     &other_radius,
                 );
 
@@ -311,10 +338,33 @@ impl MumperPhysics {
                 if let Some(collision_normal) = collision_normal
                     && let Some(penetration_depth) = penetration_depth
                 {
-                    object_collisions1.push(entity_id);
-                    object_collisions2.push(other_entity_id);
-                    collisions_normals.push(collision_normal);
-                    collisions_penetration_depth.push(penetration_depth);
+                    let is_other_rigidbody = self
+                        .rigidbody_storage
+                        .entities
+                        .contains(&(other_entity_id as u32));
+
+                    // Register Rigidbody / Rigidbody Collision
+                    if is_rigidbody && is_other_rigidbody {
+                        rr_collisions1.push(entity_id);
+                        rr_collisions2.push(other_entity_id);
+                        rr_collisions_normals.push(collision_normal);
+                        rr_collisions_penetration_depth.push(penetration_depth);
+                        continue;
+                    }
+
+                    // Register Rigidbody / Static Collision
+                    rs_collisions1.push(if is_rigidbody {
+                        entity_id
+                    } else {
+                        other_entity_id
+                    });
+                    rs_collisions2.push(if is_rigidbody {
+                        other_entity_id
+                    } else {
+                        entity_id
+                    });
+                    rs_collisions_normals.push(collision_normal);
+                    rs_collisions_penetration_depth.push(penetration_depth);
                 }
             }
 
@@ -333,7 +383,7 @@ impl MumperPhysics {
                 let other_entity_id = self.segments_collider_storage.entities[j];
                 // get vertices
                 let (vertices, calculated_vertices) =
-                    self.shape_storage.get_component(other_entity_id);
+                    self.shape_storage.get_component(&other_entity_id);
 
                 // foreach segment
                 for k in 0..calculated_vertices.len() {
@@ -343,7 +393,7 @@ impl MumperPhysics {
 
                     let (collision_normal, penetration_depth) =
                         Self::circle_segment_collision_detection(
-                            &entity_pos,
+                            &position,
                             &entity_radius,
                             &point1,
                             &point2,
@@ -354,11 +404,35 @@ impl MumperPhysics {
                     if let Some(collision_normal) = collision_normal
                         && let Some(penetration_depth) = penetration_depth
                     {
-                        object_collisions1.push(entity_id);
-                        object_collisions2.push(other_entity_id as usize);
-                        collisions_normals.push(collision_normal);
-                        collisions_penetration_depth.push(penetration_depth);
-                        break; // Collide with only 1 Segment / Entity
+                        let is_other_rigidbody = self
+                            .rigidbody_storage
+                            .entities
+                            .contains(&(other_entity_id as u32));
+
+                        // Register Rigidbody / Rigidbody Collision
+                        if is_rigidbody && is_other_rigidbody {
+                            rr_collisions1.push(entity_id);
+                            rr_collisions2.push(other_entity_id as usize);
+                            rr_collisions_normals.push(collision_normal);
+                            rr_collisions_penetration_depth.push(penetration_depth);
+                            break;
+                        }
+
+                        // Register Rigidbody / Static Collision
+                        rs_collisions1.push(if is_rigidbody {
+                            entity_id
+                        } else {
+                            other_entity_id as usize
+                        });
+                        rs_collisions2.push(if is_rigidbody {
+                            other_entity_id as usize
+                        } else {
+                            entity_id
+                        });
+                        rs_collisions_normals.push(collision_normal);
+                        rs_collisions_penetration_depth.push(penetration_depth);
+
+                        break; // Collide with only 1 Segment per Entity
                     }
                 }
             }
@@ -408,30 +482,28 @@ impl MumperPhysics {
 
     // RIGIDBODY / SOLVER
 
-    fn rigidbody_component_logic() {
+    fn rigidbody_component_logic(&mut self, dt: f32) {
+        for i in 0..self.rigidbody_storage.entities.len() {
+            let entity_id = self.rigidbody_storage.entities[i] as usize;
 
-    }
+            // 1] Update Transform
+            // Position
+            // Apply Velocity
+            let velocity_frame = self.rigidbody_storage.velocities[i] * dt;
+            let rotation_speed_frame = self.rigidbody_storage.rotation_speeds[i] * dt;
 
-    // Rigidbody Update
-    fn transform(
-        dt: &f32,
-        position: &mut Vec2,
-        velocity: &Vec2,
-        rotation: &mut f32,
-        rotation_speed: &f32,
-    ) {
-        // Position
-        // Apply Velocity
-        let velocity_frame = *velocity * dt;
+            let position = &mut self.transform_storage.positions[entity_id];
+            let rotation = &mut self.transform_storage.rotations[entity_id];
 
-        position.x += velocity_frame.x;
-        position.y += velocity_frame.y;
+            position.x += velocity_frame.x;
+            position.y += velocity_frame.y;
 
-        // Gravity
-        // pos.y -= 9.81 * dt;
+            // Gravity
+            // position.y -= 9.81 * dt;
 
-        // Rotation
-        *rotation += rotation_speed * dt;
+            // Rotation
+            *rotation += rotation_speed_frame;
+        }
     }
 
     // make a Rigidbody bounce from a normal
@@ -452,23 +524,48 @@ impl MumperPhysics {
         }
     }
 
+    // Solve Rigidbody / Static Collisions (Bounce)
+    fn rs_collisions_solver(
+        &mut self,
+        rs_collisions1: &mut Vec<usize>,
+        collisions_normals: &mut Vec<Vec2>,
+        collisions_penetration_depth: &mut Vec<f32>,
+    ) {
+        for i in 0..rs_collisions1.len() {
+            let entity_id = rs_collisions1[i] as u32;
+
+            let (velocity, _rotation_speed, bounciness) =
+                self.rigidbody_storage.get_mut_component(&entity_id);
+            let (position, _rotation, _scale) = self.transform_storage.get_mut_component(&entity_id);
+
+            Self::bounce(
+                collisions_normals[i],
+                collisions_penetration_depth[i],
+                velocity,
+                bounciness,
+                position,
+            );
+        }
+    }
+
     // TODO : Collisions Context
+    // Solve Rigidbody / Rigidbody Collisions
     fn collision_solver(
         &mut self,
-        object_collisions1: &mut Vec<usize>,
-        object_collisions2: &mut Vec<usize>,
+        rr_collisions1: &mut Vec<usize>,
+        rr_collisions2: &mut Vec<usize>,
         collisions_normals: &mut Vec<Vec2>,
         collisions_penetration_depth: &mut Vec<f32>,
     ) {
         for _iteration in 0..SOLVER_ITERATIONS {
-            for i in 0..object_collisions1.len() {
+            for i in 0..rr_collisions1.len() {
                 // inv_mass = invariant mass
                 let a_inv_mass = 1.0;
                 let b_inv_mass = 1.0;
                 let total_inv_mass = a_inv_mass + b_inv_mass;
 
-                let entity_id1 = object_collisions1[i];
-                let entity_id2 = object_collisions2[i];
+                let entity_id1 = rr_collisions1[i];
+                let entity_id2 = rr_collisions2[i];
                 let penetration_depth = collisions_penetration_depth[i];
                 let normal = collisions_normals[i];
 
