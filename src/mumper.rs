@@ -19,13 +19,7 @@ pub struct Mumper {
     // editor_state: EditorState, (Camera)
     // ECS
     pub ecs: MumperECS,
-    // Components
-    pub default_transforms: TransformStorage,
-    // Physics Components (Shared with physics)
-    pub transform_storage: TransformStorage,
-    pub radius_collider_storage: RadiusColliderStorage,
-    pub segments_collider_storage: SegmentColliderStorage,
-    pub rigidbody_storage: RigidbodyStorage,
+    pub components: Components,
     // Physics
     pub physics: Arc<Mutex<MumperPhysics>>,
     pub is_paused: Arc<AtomicBool>, // only pause physics but not rendering
@@ -36,34 +30,27 @@ pub struct Mumper {
 impl Mumper {
     pub fn new(cc: &CreationContext) -> Self {
         // ECS
-        let ecs = MumperECS::new();
-
-        let default_transforms = TransformStorage::new();
-        let transform_storage = TransformStorage::new();
-
-        let radius_collider_storage = RadiusColliderStorage::new();
-        let segments_collider_storage = SegmentColliderStorage::new();
-        let rigidbody_storage = RigidbodyStorage::new();
+        let mut ecs = MumperECS::new();
+        let components = Components::new(&mut ecs);
 
         // Physics
         let physics: Arc<Mutex<MumperPhysics>> = Arc::new(Mutex::new(MumperPhysics::new()));
         let is_paused: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
         Self::start_physic_thread(&physics, &is_paused);
 
+        // Renderer
+        let renderer = MumperRenderer::new(&mut ecs, cc.egui_ctx.content_rect(), cc.egui_ctx.debug_painter());
+
         Self {
             settings: Settings::new(),
             // ECS
             ecs,
-            default_transforms,
-            transform_storage,
-            radius_collider_storage,
-            segments_collider_storage,
-            rigidbody_storage,
+            components,
             // Physics
             physics,
             is_paused,
             // Renderer
-            renderer: MumperRenderer::new(cc.egui_ctx.content_rect(), cc.egui_ctx.debug_painter()),
+            renderer,
         }
     }
 

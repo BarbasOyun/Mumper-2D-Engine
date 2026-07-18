@@ -1,12 +1,13 @@
+// TODO :
+// Quadtree -> Separate Space
+
 use glam::Vec2;
 
 use crate::gears;
 use crate::mumper_ecs::*;
+use crate::mumper_renderer::NormalsRendererStorage;
 
 const SOLVER_ITERATIONS: usize = 6;
-
-// TODO :
-// Quadtree -> Separate Space
 
 // Physics own a version of the physics components
 pub struct MumperPhysics {
@@ -21,16 +22,67 @@ pub struct MumperPhysics {
     pub rigidbody_storage: RigidbodyStorage,
 }
 
+struct CollisionsData {
+    // Rigidbody / Rigidbody Collisions
+    rr_collisions1: Vec<usize>, // entity_id
+    rr_collisions2: Vec<usize>,
+    rr_collisions_normals: Vec<Vec2>,
+    rr_collisions_penetration_depth: Vec<f32>,
+
+    // Rigidbody / Static Collisions
+    rs_collisions1: Vec<usize>,
+    rs_collisions2: Vec<usize>,
+    rs_collisions_normals: Vec<Vec2>,
+    rs_collisions_penetration_depth: Vec<f32>,
+}
+
+impl CollisionsData {
+    fn new() -> Self {
+        return Self {
+            // Rigidbody / Rigidbody Collisions
+            rr_collisions1: vec![],
+            rr_collisions2: vec![],
+            rr_collisions_normals: vec![],
+            rr_collisions_penetration_depth: vec![],
+
+            // Rigidbody / Static Collisions
+            rs_collisions1: vec![],
+            rs_collisions2: vec![],
+            rs_collisions_normals: vec![],
+            rs_collisions_penetration_depth: vec![],
+        };
+    }
+}
+
+struct CollisionData {
+    entity_id1: usize,
+    entity_id2: usize,
+    collision_normal: Vec2,
+    collision_penetration_depth: f32,
+}
+
+struct EntityCollisionData<'a> {
+    entity_id: &'a usize,
+    position: &'a Vec2,
+    ignore_list: &'a Vec<usize>,
+    is_rigidbody: &'a bool,
+}
+
 impl MumperPhysics {
     pub fn new() -> Self {
-        let transform_storage = TransformStorage::new();
+        // Add physics components in the Physics world
+        // Avoid incrementing ECS component count
+        let transform_storage = TransformStorage::new(ComponentType::Transform as usize);
 
-        let shape_storage = PhysicsShapeStorage::new();
-        let normals_renderer_storage = NormalsRendererStorage::new();
+        let shape_storage = PhysicsShapeStorage::new(ComponentType::Renderer as usize);
+        let normals_renderer_storage =
+            NormalsRendererStorage::new(ComponentType::NormalsRenderer as usize);
 
-        let radius_collider_storage = RadiusColliderStorage::new();
-        let segments_collider_storage = SegmentColliderStorage::new();
-        let rigidbody_storage = RigidbodyStorage::new();
+        let radius_collider_storage =
+            RadiusColliderStorage::new(ComponentType::RadiusCollider as usize);
+        let segments_collider_storage =
+            SegmentColliderStorage::new(ComponentType::SegmentsCollider as usize);
+        let rigidbody_storage = RigidbodyStorage::new(ComponentType::Rigidbody as usize);
 
         return Self {
             transform_storage,
@@ -42,7 +94,7 @@ impl MumperPhysics {
         };
     }
 
-    // PHYSICS UPDATE
+    /* #region PHYSICS UPDATE */
 
     pub fn tick(&mut self, dt: f32) {
         // TODO :
@@ -50,37 +102,17 @@ impl MumperPhysics {
         // 2) foreach collider(use calculated_vertices) -> Build collisions data
         // 3) foreach rigidbody -> Physics + Change Transform (Use Collisions)
 
-        // Detect Collision
-        // if !rigidbody = bounce
-        // else Solve
-
-        let square_lines_thickness = 0.1;
-
-        // Rigidbody / Rigidbody Collisions
-        let mut rr_collisions1: Vec<usize> = vec![]; // entity_id
-        let mut rr_collisions2: Vec<usize> = vec![];
-        let mut rr_collisions_normals: Vec<Vec2> = vec![];
-        let mut rr_collisions_penetration_depth: Vec<f32> = vec![];
-
-        // Rigidbody / Static Collisions
-        let mut rs_collisions1: Vec<usize> = vec![];
-        let mut rs_collisions2: Vec<usize> = vec![];
-        let mut rs_collisions_normals: Vec<Vec2> = vec![];
-        let mut rs_collisions_penetration_depth: Vec<f32> = vec![];
+        // println!("Physics Tick");
 
         self.shape_components_logic();
         self.normal_components_logic();
 
-        self.radius_collider_components_logic(
-            &mut rr_collisions1,
-            &mut rr_collisions2,
-            &mut rr_collisions_normals,
-            &mut rr_collisions_penetration_depth,
-            &mut rs_collisions1,
-            &mut rs_collisions2,
-            &mut rs_collisions_normals,
-            &mut rs_collisions_penetration_depth,
-        );
+        // 1] Detect Collision
+        // let square_lines_thickness = 0.1;
+
+        let mut collisions_data = CollisionsData::new();
+
+        self.radius_collider_components_logic(&mut collisions_data);
         // segment_collider_components_logic();
         self.rigidbody_component_logic(dt);
 
@@ -105,18 +137,9 @@ impl MumperPhysics {
         // }
 
         // 2] Solve Collisions
-        self.rs_collisions_solver(
-            &mut rs_collisions1,
-            &mut rs_collisions_normals,
-            &mut rs_collisions_penetration_depth,
-        );
+        self.rs_collisions_solver(&mut collisions_data);
 
-        self.collision_solver(
-            &mut rr_collisions1,
-            &mut rr_collisions2,
-            &mut rr_collisions_normals,
-            &mut rr_collisions_penetration_depth,
-        );
+        self.collision_solver(&mut collisions_data);
     }
 
     // Calculate Vertices
@@ -124,7 +147,7 @@ impl MumperPhysics {
         for i in 0..self.shape_storage.entities.len() {
             // Get transform
             let entity_id = self.shape_storage.entities[i];
-            let (position, rotation, scale) = self.transform_storage.get_component(&entity_id);
+            let (position, rotation, scale) = self.transform_storage.get_component(entity_id);
 
             let calculated_vertices = Self::image_vertices(
                 *position,
@@ -142,7 +165,7 @@ impl MumperPhysics {
         for i in 0..self.normals_renderer_storage.entities.len() {
             // Get Calculated Vertices
             let entity_id = self.normals_renderer_storage.entities[i];
-            let (vertices, calculated_vertices) = self.shape_storage.get_component(&entity_id);
+            let (_vertices, calculated_vertices) = self.shape_storage.get_component(entity_id);
 
             let (normal_pos, segments_normals) = Self::edges_normal(calculated_vertices);
 
@@ -151,7 +174,9 @@ impl MumperPhysics {
         }
     }
 
-    // RENDER DATA
+    /* #endregion */
+
+    /* #region RENDER DATA */
 
     // Multiply base vertices with model matrix
     // return calculated_vertices
@@ -200,7 +225,9 @@ impl MumperPhysics {
         return (normal_positions, segments_normals);
     }
 
-    // COLLISIONS DETECTION
+    /* #endregion */
+
+    /* #region COLLISIONS DETECTION */
 
     // Each collider collides with itself and every collider after
     // eg Collider1, Collider2, Collider3
@@ -263,177 +290,217 @@ impl MumperPhysics {
         return (None, None);
     }
 
-    fn radius_collider_components_logic(
-        &mut self,
-        rr_collisions1: &mut Vec<usize>,
-        rr_collisions2: &mut Vec<usize>,
-        rr_collisions_normals: &mut Vec<Vec2>,
-        rr_collisions_penetration_depth: &mut Vec<f32>,
-        rs_collisions1: &mut Vec<usize>,
-        rs_collisions2: &mut Vec<usize>,
-        rs_collisions_normals: &mut Vec<Vec2>,
-        rs_collisions_penetration_depth: &mut Vec<f32>,
-    ) {
-        // foreach entities with Circle Collider Component
+    fn radius_collider_components_logic(&self, collisions_data: &mut CollisionsData) {
+        // foreach entities with Radius Collider Component
         // TODO : use iterate_over_component
 
         for i in 0..self.radius_collider_storage.entities.len() {
-            let radius = self.radius_collider_storage.radiuses[i];
+            let entity_radius = self.radius_collider_storage.radiuses[i];
 
-            if radius == 0.0 {
+            if entity_radius == 0.0 {
                 continue;
             }
 
-            // Current Entity Circle
-            let entity_id = self.radius_collider_storage.entities[i] as usize;
+            // Current Entity
+            let entity_id = self.radius_collider_storage.entities[i];
+            let (position, _rotation, _scale) = self.transform_storage.get_component(entity_id);
+            // TODO : use has_component
+            let is_rigidbody = self.rigidbody_storage.entities.contains(&entity_id);
 
-            let entity_radius = self.radius_collider_storage.radiuses[i];
-            let (position, _rotation, _scale) = self.transform_storage.get_component(&(entity_id as u32));
-
-            let is_rigidbody = self
-                .rigidbody_storage
-                .entities
-                .contains(&(entity_id as u32));
-
-            // TODO : Optimize
-            // Ignore already detected collision
+            // Ignore List
             // If this entity collided with another -> Ignore this other Entity
+            // TODO : Optimize
             let mut ignore_list: Vec<usize> = vec![]; // Indexes already captured
 
             if is_rigidbody {
-                for j in 0..rr_collisions2.len() {
-                    if rr_collisions2[j] == entity_id {
-                        ignore_list.push(rr_collisions1[j]);
+                for j in 0..collisions_data.rr_collisions2.len() {
+                    if collisions_data.rr_collisions2[j] == entity_id {
+                        ignore_list.push(collisions_data.rr_collisions1[j]);
                     }
                 }
             } else {
-                for j in 0..rs_collisions1.len() {
-                    if rs_collisions2[j] == entity_id {
-                        ignore_list.push(rs_collisions1[j]);
+                for j in 0..collisions_data.rs_collisions1.len() {
+                    if collisions_data.rs_collisions2[j] == entity_id {
+                        ignore_list.push(collisions_data.rs_collisions1[j]);
                     }
                 }
             }
 
-            // Detect Collisions -> Other Circles
-            for j in 0..self.radius_collider_storage.entities.len() {
-                let other_radius = self.radius_collider_storage.radiuses[j];
+            let entity_collision_data = EntityCollisionData {
+                entity_id: &entity_id,
+                position,
+                ignore_list: &ignore_list,
+                is_rigidbody: &is_rigidbody,
+            };
 
-                if j == entity_id || other_radius == 0.0 || ignore_list.contains(&j) {
+            self.detect_other_radius_components_collision(
+                collisions_data,
+                &entity_collision_data,
+                &entity_radius,
+            );
+
+            self.detect_other_segment_components_collision(
+                collisions_data,
+                &entity_collision_data,
+                &entity_radius,
+            )
+        }
+    }
+
+    // Take a Single Radius Component and Detect its collisions with others
+    fn detect_other_radius_components_collision(
+        &self,
+        collisions_data: &mut CollisionsData,
+        entity_collision_data: &EntityCollisionData,
+        entity_radius: &f32,
+    ) {
+        let entity_id = entity_collision_data.entity_id;
+        let is_rigidbody = entity_collision_data.is_rigidbody;
+
+        for j in 0..self.radius_collider_storage.entities.len() {
+            let other_radius = self.radius_collider_storage.radiuses[j];
+
+            if j == *entity_id
+                || other_radius == 0.0
+                || entity_collision_data.ignore_list.contains(&j)
+            {
+                continue;
+            }
+
+            let other_entity_id = self.transform_storage.entities[j];
+
+            // Other Entity Circle
+            let (other_position, _other_rotation, _other_scale) =
+                self.transform_storage.get_component(other_entity_id);
+
+            let (collision_normal, penetration_depth) = Self::circle_circle_collision_detection(
+                &entity_collision_data.position,
+                &entity_radius,
+                &other_position,
+                &other_radius,
+            );
+
+            // Collision Detected -> Register
+            if let Some(collision_normal) = collision_normal
+                && let Some(penetration_depth) = penetration_depth
+            {
+                let is_other_rigidbody =
+                    self.rigidbody_storage.entities.contains(&(other_entity_id));
+
+                // Static / Static Collision -> Do nothing
+                if !is_rigidbody && !is_other_rigidbody {
                     continue;
                 }
 
-                let other_entity_id = self.transform_storage.entities[j] as usize;
+                // Register Rigidbody / Rigidbody Collision
+                if *is_rigidbody && is_other_rigidbody {
+                    collisions_data.rr_collisions1.push(*entity_id);
+                    collisions_data.rr_collisions2.push(other_entity_id);
+                    collisions_data.rr_collisions_normals.push(collision_normal);
+                    collisions_data
+                        .rr_collisions_penetration_depth
+                        .push(penetration_depth);
+                    continue;
+                }
 
-                // Other Entity Circle
-                let (other_position, _other_rotation, _other_scale) = self.transform_storage.get_component(&(entity_id as u32));
+                // Register Rigidbody / Static Collision
+                collisions_data.rs_collisions1.push(if *is_rigidbody {
+                    *entity_id
+                } else {
+                    other_entity_id
+                });
+                collisions_data.rs_collisions2.push(if *is_rigidbody {
+                    other_entity_id
+                } else {
+                    *entity_id
+                });
+                collisions_data.rs_collisions_normals.push(collision_normal);
+                collisions_data
+                    .rs_collisions_penetration_depth
+                    .push(penetration_depth);
+            }
+        }
+    }
 
-                let (collision_normal, penetration_depth) = Self::circle_circle_collision_detection(
-                    &position,
-                    &entity_radius,
-                    &other_position,
-                    &other_radius,
-                );
+    fn detect_other_segment_components_collision(
+        &self,
+        collisions_data: &mut CollisionsData,
+        entity_collision_data: &EntityCollisionData,
+        entity_radius: &f32,
+    ) {
+        for j in 0..self.segments_collider_storage.entities.len() {
+            let thickness = self.segments_collider_storage.edge_thicknesses[j];
+
+            if self.radius_collider_storage.radiuses[j] == 0.0
+                || entity_collision_data.ignore_list.contains(&j)
+            {
+                continue;
+            }
+
+            if thickness == 0.0 {
+                continue;
+            }
+
+            let other_entity_id = self.segments_collider_storage.entities[j];
+            // get vertices
+            let (vertices, calculated_vertices) = self.shape_storage.get_component(other_entity_id);
+
+            // foreach segment
+            for k in 0..calculated_vertices.len() {
+                let point1 = vertices[k];
+                let next_index = (k + 1) % vertices.len();
+                let point2 = vertices[next_index];
+
+                let (collision_normal, penetration_depth) =
+                    Self::circle_segment_collision_detection(
+                        &entity_collision_data.position,
+                        &entity_radius,
+                        &point1,
+                        &point2,
+                        &thickness,
+                    );
 
                 // Collision Detected -> Register
                 if let Some(collision_normal) = collision_normal
                     && let Some(penetration_depth) = penetration_depth
                 {
-                    let is_other_rigidbody = self
-                        .rigidbody_storage
-                        .entities
-                        .contains(&(other_entity_id as u32));
+                    let is_other_rigidbody =
+                        self.rigidbody_storage.entities.contains(&(other_entity_id));
 
                     // Register Rigidbody / Rigidbody Collision
-                    if is_rigidbody && is_other_rigidbody {
-                        rr_collisions1.push(entity_id);
-                        rr_collisions2.push(other_entity_id);
-                        rr_collisions_normals.push(collision_normal);
-                        rr_collisions_penetration_depth.push(penetration_depth);
-                        continue;
+                    if *entity_collision_data.is_rigidbody && is_other_rigidbody {
+                        collisions_data
+                            .rr_collisions1
+                            .push(*entity_collision_data.entity_id);
+                        collisions_data.rr_collisions2.push(other_entity_id);
+                        collisions_data.rr_collisions_normals.push(collision_normal);
+                        collisions_data
+                            .rr_collisions_penetration_depth
+                            .push(penetration_depth);
+                        break;
                     }
 
                     // Register Rigidbody / Static Collision
-                    rs_collisions1.push(if is_rigidbody {
-                        entity_id
-                    } else {
-                        other_entity_id
-                    });
-                    rs_collisions2.push(if is_rigidbody {
-                        other_entity_id
-                    } else {
-                        entity_id
-                    });
-                    rs_collisions_normals.push(collision_normal);
-                    rs_collisions_penetration_depth.push(penetration_depth);
-                }
-            }
-
-            // Detect Collisions -> Segments
-            for j in 0..self.segments_collider_storage.entities.len() {
-                let thickness = self.segments_collider_storage.edge_thicknesses[j];
-
-                if self.radius_collider_storage.radiuses[j] == 0.0 || ignore_list.contains(&j) {
-                    continue;
-                }
-
-                if thickness == 0.0 {
-                    continue;
-                }
-
-                let other_entity_id = self.segments_collider_storage.entities[j];
-                // get vertices
-                let (vertices, calculated_vertices) =
-                    self.shape_storage.get_component(&other_entity_id);
-
-                // foreach segment
-                for k in 0..calculated_vertices.len() {
-                    let point1 = vertices[k];
-                    let next_index = (k + 1) % vertices.len();
-                    let point2 = vertices[next_index];
-
-                    let (collision_normal, penetration_depth) =
-                        Self::circle_segment_collision_detection(
-                            &position,
-                            &entity_radius,
-                            &point1,
-                            &point2,
-                            &thickness,
-                        );
-
-                    // Collision Detected -> Register
-                    if let Some(collision_normal) = collision_normal
-                        && let Some(penetration_depth) = penetration_depth
-                    {
-                        let is_other_rigidbody = self
-                            .rigidbody_storage
-                            .entities
-                            .contains(&(other_entity_id as u32));
-
-                        // Register Rigidbody / Rigidbody Collision
-                        if is_rigidbody && is_other_rigidbody {
-                            rr_collisions1.push(entity_id);
-                            rr_collisions2.push(other_entity_id as usize);
-                            rr_collisions_normals.push(collision_normal);
-                            rr_collisions_penetration_depth.push(penetration_depth);
-                            break;
-                        }
-
-                        // Register Rigidbody / Static Collision
-                        rs_collisions1.push(if is_rigidbody {
-                            entity_id
+                    collisions_data
+                        .rs_collisions1
+                        .push(if *entity_collision_data.is_rigidbody {
+                            *entity_collision_data.entity_id
                         } else {
-                            other_entity_id as usize
+                            other_entity_id
                         });
-                        rs_collisions2.push(if is_rigidbody {
-                            other_entity_id as usize
+                    collisions_data
+                        .rs_collisions2
+                        .push(if *entity_collision_data.is_rigidbody {
+                            other_entity_id
                         } else {
-                            entity_id
+                            *entity_collision_data.entity_id
                         });
-                        rs_collisions_normals.push(collision_normal);
-                        rs_collisions_penetration_depth.push(penetration_depth);
+                    collisions_data.rs_collisions_normals.push(collision_normal);
+                    collisions_data
+                        .rs_collisions_penetration_depth
+                        .push(penetration_depth);
 
-                        break; // Collide with only 1 Segment per Entity
-                    }
+                    break; // Collide with only 1 Segment per Entity
                 }
             }
         }
@@ -480,11 +547,13 @@ impl MumperPhysics {
         }
     }
 
-    // RIGIDBODY / SOLVER
+    /* #endregion */
+
+    /* #region RIGIDBODY / SOLVER */
 
     fn rigidbody_component_logic(&mut self, dt: f32) {
         for i in 0..self.rigidbody_storage.entities.len() {
-            let entity_id = self.rigidbody_storage.entities[i] as usize;
+            let entity_id = self.rigidbody_storage.entities[i];
 
             // 1] Update Transform
             // Position
@@ -525,22 +594,18 @@ impl MumperPhysics {
     }
 
     // Solve Rigidbody / Static Collisions (Bounce)
-    fn rs_collisions_solver(
-        &mut self,
-        rs_collisions1: &mut Vec<usize>,
-        collisions_normals: &mut Vec<Vec2>,
-        collisions_penetration_depth: &mut Vec<f32>,
-    ) {
-        for i in 0..rs_collisions1.len() {
-            let entity_id = rs_collisions1[i] as u32;
+    fn rs_collisions_solver(&mut self, collisions_data: &mut CollisionsData) {
+        for i in 0..collisions_data.rs_collisions1.len() {
+            let entity_id = collisions_data.rs_collisions1[i];
 
             let (velocity, _rotation_speed, bounciness) =
-                self.rigidbody_storage.get_mut_component(&entity_id);
-            let (position, _rotation, _scale) = self.transform_storage.get_mut_component(&entity_id);
+                self.rigidbody_storage.get_mut_component(entity_id);
+
+            let (position, _rotation, _scale) = self.transform_storage.get_mut_component(entity_id);
 
             Self::bounce(
-                collisions_normals[i],
-                collisions_penetration_depth[i],
+                collisions_data.rs_collisions_normals[i],
+                collisions_data.rs_collisions_penetration_depth[i],
                 velocity,
                 bounciness,
                 position,
@@ -550,29 +615,38 @@ impl MumperPhysics {
 
     // TODO : Collisions Context
     // Solve Rigidbody / Rigidbody Collisions
-    fn collision_solver(
-        &mut self,
-        rr_collisions1: &mut Vec<usize>,
-        rr_collisions2: &mut Vec<usize>,
-        collisions_normals: &mut Vec<Vec2>,
-        collisions_penetration_depth: &mut Vec<f32>,
-    ) {
+    fn collision_solver(&mut self, collisions_data: &mut CollisionsData) {
         for _iteration in 0..SOLVER_ITERATIONS {
-            for i in 0..rr_collisions1.len() {
+            for i in 0..collisions_data.rr_collisions1.len() {
+                // Get properties
+
                 // inv_mass = invariant mass
-                let a_inv_mass = 1.0;
+                let a_inv_mass = 1.0; // TODO : Rigidbody property
                 let b_inv_mass = 1.0;
                 let total_inv_mass = a_inv_mass + b_inv_mass;
-
-                let entity_id1 = rr_collisions1[i];
-                let entity_id2 = rr_collisions2[i];
-                let penetration_depth = collisions_penetration_depth[i];
-                let normal = collisions_normals[i];
 
                 // If both objects are unmovable
                 if total_inv_mass == 0.0 {
                     continue;
                 }
+
+                // Entity1 Properties
+                let entity_id1 = collisions_data.rr_collisions1[i];
+                let transform_id1 = self.transform_storage.get_component_id(entity_id1);
+                let rigidbody_id1 = self.rigidbody_storage.get_component_id(entity_id1);
+                let velocity1 = self.rigidbody_storage.velocities[rigidbody_id1];
+                let bounciness1 = self.rigidbody_storage.bounciness[rigidbody_id1];
+
+                // Entity2 Properties
+                let entity_id2 = collisions_data.rr_collisions2[i];
+                let transform_id2 = self.transform_storage.get_component_id(entity_id2);
+                let rigidbody_id2 = self.rigidbody_storage.get_component_id(entity_id2);
+                let velocity2 = self.rigidbody_storage.velocities[rigidbody_id2];
+                let bounciness2 = self.rigidbody_storage.bounciness[rigidbody_id2];
+
+                // Collision Properties
+                let normal = collisions_data.rr_collisions_normals[i];
+                let penetration_depth = collisions_data.rr_collisions_penetration_depth[i];
 
                 // 1] Positional Correction
                 let percent = 0.05; // Resolve X% of the penetration per iteration
@@ -583,21 +657,19 @@ impl MumperPhysics {
                 let correction_vector = normal * correction_magnitude;
 
                 // Separation
-                self.transform_storage.positions[entity_id1] -= correction_vector * a_inv_mass;
-                self.transform_storage.positions[entity_id2] += correction_vector * b_inv_mass;
+                self.transform_storage.positions[transform_id1] -= correction_vector * a_inv_mass;
+                self.transform_storage.positions[transform_id2] += correction_vector * b_inv_mass;
 
                 // 2] Impulse Resolution
                 // Relative velocity
-                let rel_velocity = self.rigidbody_storage.velocities[entity_id2]
-                    - self.rigidbody_storage.velocities[entity_id1];
+                let rel_velocity = velocity2 - velocity1;
 
                 let vel_along_normal = rel_velocity.dot(normal);
 
                 // Do not resolve if velocities are already moving apart
                 if vel_along_normal < 0.0 {
                     // Choose lower bounciness between Entities
-                    let restitution = self.rigidbody_storage.bounciness[entity_id1]
-                        .min(self.rigidbody_storage.bounciness[entity_id2]);
+                    let restitution = bounciness1.min(bounciness2);
 
                     // Calculate impulse scalar
                     let mut impulse_scalar = -(1.0 + restitution) * vel_along_normal;
@@ -605,14 +677,16 @@ impl MumperPhysics {
 
                     // Apply impulse to each circle
                     let impulse = normal * impulse_scalar;
-                    self.rigidbody_storage.velocities[entity_id1] -= impulse * a_inv_mass;
-                    self.rigidbody_storage.velocities[entity_id2] += impulse * b_inv_mass;
+                    self.rigidbody_storage.velocities[rigidbody_id1] -= impulse * a_inv_mass;
+                    self.rigidbody_storage.velocities[rigidbody_id2] += impulse * b_inv_mass;
                 }
             }
         }
     }
 
-    // UTILS
+    /* #endregion */
+
+    /* #region UTILS  */
 
     // Detect if a point collide with a line (infinite)
     // use dot product between line_normal & point
@@ -650,4 +724,6 @@ impl MumperPhysics {
 
         return to_point;
     }
+
+    /* #endregion */
 }

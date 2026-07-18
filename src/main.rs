@@ -134,40 +134,48 @@ impl MumperDemo {
 
         // LClick = Create Polygon
         if lclick_released && response.hovered() {
-            self.create_shape(&global_pointer_position);
+            let settings = &mut self.settings;
+
+            let world_pos = MumperRenderer::screen_to_world(&self.mumper.renderer, &global_pointer_position);
+            let radius = settings.radius;
+            let segments = settings.segments;
+            let vertices = gears::circle_vertices(radius, segments);
+            let stroke = Stroke::new(settings.stroke_width, settings.stroke_color);
+
+            Self::create_shape(&mut self.mumper, world_pos, vertices, radius, settings.polygon_velocity, stroke);
         }
     }
 
-    fn create_shape(&mut self, screen_pos: &Pos2) {
-        let state = &mut self.mumper;
-        let settings = &mut self.settings;
+    // Create a Shape with a Radius Collider & Rigidbody
+    fn create_shape(
+        mumper: &mut Mumper,
+        world_pos: Vec2,
+        vertices: Vec<Vec2>,
+        radius: f32,
+        velocity: Vec2,
+        stroke: Stroke,
+    ) {
+        // Create entity + Add components = Polygon
+        let entity_id = MumperECS::create_entity(&mut mumper.ecs);
+        MumperECS::add_transform(mumper, entity_id, world_pos, 0.0, Vec2::ONE);
+        MumperECS::add_shape_renderer(mumper, entity_id, vertices, stroke);
+        MumperECS::add_radius_collider(mumper, entity_id, radius);
+        MumperECS::add_rigidbody(mumper, entity_id, velocity, -1.0, 1.0);
+    }
 
-        let world_pos = MumperRenderer::screen_to_world(&state.renderer, screen_pos);
-        // let world_pos = MumperRenderer::screen_to_world(&state.renderer, global_pointer_position);
-
-        let radius = settings.radius;
-        let segments = settings.segments;
-        let vertices = gears::circle_vertices(radius, segments);
-
-        // create entity
-        // add renderer
-        // add transform
-        // add radius collider
-        // add Rigidbody
-
-        // state.create_shape(
-        //     vertices,
-        //     true,
-        //     radius,
-        //     0.1,
-        //     world_pos,
-        //     0.0,
-        //     Vec2::ONE,
-        //     settings.polygon_velocity,
-        //     -1.0,
-        //     1.0,
-        //     Stroke::new(settings.stroke_width, settings.stroke_color),
-        // );
+    // Create a (static) Wall
+    fn create_wall(
+        mumper: &mut Mumper,
+        world_pos: Vec2,
+        vertices: Vec<Vec2>,
+        thickness: f32,
+        stroke: Stroke,
+    ) {
+        // Create entity + Add components = Polygon
+        let entity_id = MumperECS::create_entity(&mut mumper.ecs);
+        MumperECS::add_transform(mumper, entity_id, world_pos, 0.0, Vec2::ONE);
+        MumperECS::add_shape_renderer(mumper, entity_id, vertices, stroke);
+        MumperECS::add_segments_collider(mumper, entity_id, thickness);
     }
 
     // UI COMPONENTS
@@ -244,7 +252,7 @@ impl MumperDemo {
         });
     }
 
-    fn default_scene(state: &mut Mumper) {
+    fn default_scene(mumper: &mut Mumper) {
         // Default Scene
 
         // Square
@@ -255,10 +263,9 @@ impl MumperDemo {
             Vec2::new(-10.0, -10.0),
         ];
 
-        // TODO :
-        // create entity
-        // add renderer + transform
-        // add segments collider
+        let square_stroke = Stroke::new(5.0, Color32::LIGHT_YELLOW);
+
+        Self::create_wall(mumper, Vec2::ZERO, square_vertices, 0.1, square_stroke);
 
         // state.create_shape(
         //     square_vertices,
@@ -306,6 +313,8 @@ impl MumperDemo {
             //     bounciness[i],
             //     strokes[i],
             // );
+
+            Self::create_shape(mumper, positions[i], vertices[i].clone(), radiuses[i], velocities[i], strokes[i]);
         }
     }
 

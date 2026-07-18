@@ -33,9 +33,9 @@ pub struct MumperRenderer {
 }
 
 impl MumperRenderer {
-    pub fn new(viewport: Rect, viewport_painter: Painter) -> Self {
-        let shape_renderer_storage = ShapeRendererStorage::new();
-        let normals_renderer_storage = NormalsRendererStorage::new();
+    pub fn new(ecs: &mut MumperECS, viewport: Rect, viewport_painter: Painter) -> Self {
+        let shape_renderer_storage = ShapeRendererStorage::new(MumperECS::register_storage_id(ecs));
+        let normals_renderer_storage = NormalsRendererStorage::new(MumperECS::register_storage_id(ecs));
 
         Self {
             // View
@@ -99,7 +99,7 @@ impl MumperRenderer {
             state.renderer.normals_renderer_storage = physics.normals_renderer_storage.clone();
 
             // Get Transform
-            state.transform_storage = physics.transform_storage.clone();
+            state.components.transform_storage = physics.transform_storage.clone();
         };
 
         // Draw normals
@@ -108,16 +108,16 @@ impl MumperRenderer {
             Self::draw_normals(&state.renderer);
         }
 
-        Self::render_shape_components_logic(state);
+        Self::render_shape_components_logic(&mut state.renderer);
     }
 
-    fn render_shape_components_logic(state: &mut Mumper) {
+    fn render_shape_components_logic(renderer: &mut MumperRenderer) {
         // Render Shape Component Logic
-        for i in 0..state.renderer.shape_renderer_storage.entities.len() {
+        for i in 0..renderer.shape_renderer_storage.entities.len() {
             Self::render_shape(
-                &state.renderer,
-                &state.renderer.shape_renderer_storage.calculated_vertices[i],
-                state.renderer.shape_renderer_storage.strokes[i],
+                &renderer,
+                &renderer.shape_renderer_storage.calculated_vertices[i],
+                renderer.shape_renderer_storage.strokes[i],
             );
         }
     }
@@ -235,3 +235,28 @@ impl MumperRenderer {
         return Vec2::new(world_pos_x, world_pos_y);
     }
 }
+
+// RENDERER COMPONENTS
+
+component_storage!(
+    struct ShapeRendererStorage {
+        // TODO : Flatten
+        calculated_vertices: Vec<Vec2>,
+        strokes: Stroke,
+    },
+    add_default: |storage: &mut ShapeRendererStorage, ecs: &mut MumperECS, entity_id: usize| {
+        storage.add(ecs, entity_id, vec![], Stroke::new(1.0, Color32::RED));
+    }
+);
+
+component_storage!(
+    struct NormalsRendererStorage {
+        normal_pos: Vec<Vec2>,
+        edge_normals: Vec<Vec2>,
+    },
+    add_default: |storage: &mut NormalsRendererStorage, ecs: &mut MumperECS, entity_id: usize| {
+        storage.add(ecs, entity_id, vec![], vec![]);
+    }
+);
+
+// TODO : CameraStorage

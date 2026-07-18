@@ -1,39 +1,38 @@
-// MumperECS :
-// Entity = ID + Version
-// Components
-// Systems = Components Logic
-
-// Custom App (Implementing Mumper)
-// define CustomComponents
-
 // TODO :
+// Component Dependencies -> On Adding : Add components that the component Depend on -> Sync Physics Components
 // Archetype ECS -> Group Entities by Archetype, Archetype = Entities with the same Components
-// Impl Component Trait in macro
-// define_components! macro
-// remove_entity! macro -> make a function that remove entity's CustomComponents
+// Object pooling = create pool of Archetype + Disable
 
-use eframe::egui::*;
+use egui::Stroke;
 use glam::Vec2;
 
 use crate::Mumper;
-use crate::MumperPhysics;
 
-pub struct MumperECS<A: Component> {
-    component_count: u32,
-    custom_components: Vec<A>,
-    pub entity_ids: Vec<u32>, // TODO : usize
+pub struct MumperECS {
+    pub component_count: usize,
+    pub entity_ids: Vec<usize>,
     // versions: Vec<u32>,
-    entities_bitmask: Vec<u64>, // Avoid checking every ComponentStorage for an entity on Removing it
+    pub entities_bitmask: Vec<u64>, // Avoid checking every ComponentStorage for an entity on Removing it
 }
 
-impl<A: Component> MumperECS<A> {
+impl MumperECS {
     pub fn new() -> Self {
-        Self {
-            component_count: 6,
-            custom_components: vec![],
+        return Self {
+            component_count: 0,
             entity_ids: vec![],
             entities_bitmask: vec![],
-        }
+        };
+    }
+
+    // STORAGE
+
+    // get the next storage id
+    // ensure every storage have a unique id
+    pub fn register_storage_id(ecs: &mut MumperECS) -> usize {
+        let id = ecs.component_count.clone();
+        ecs.component_count += 1;
+
+        return id;
     }
 
     // MASK
@@ -42,30 +41,25 @@ impl<A: Component> MumperECS<A> {
         return 1u64 << (id as u8);
     }
 
-    pub fn add_mask(ecs: &mut MumperECS, entity_id: usize, component_mask: u64) {
-        ecs.entities_bitmask[entity_id] |= component_mask;
+    pub fn add_mask(entity_mask: &mut u64, component_mask: u64) {
+        *entity_mask |= component_mask;
     }
 
-    pub fn has_component(ecs: &mut MumperECS, entity_id: usize, component_mask: u64) -> bool {
-        let mask = ecs.entities_bitmask[entity_id];
-
-        return (mask & component_mask) != 0;
-    }
-
-    pub fn remove_mask(ecs: &mut MumperECS, entity_id: usize, component_mask: u64) {
-        ecs.entities_bitmask[entity_id] &= !component_mask;
+    pub fn remove_mask(entity_mask: &mut u64, component_mask: u64) {
+        *entity_mask &= !component_mask;
     }
 
     // ENTITIES
 
-    pub fn create_entity(ecs: &mut MumperECS) -> u32 {
-        let entity_id = ecs.entity_ids.len() as u32;
+    pub fn create_entity(ecs: &mut MumperECS) -> usize {
+        let entity_id = ecs.entity_ids.len();
         ecs.entity_ids.push(entity_id);
+        ecs.entities_bitmask.push(0);
 
         return entity_id;
     }
 
-    pub fn create_entity_comp<T: Component>(ecs: &mut MumperECS, components: &mut Vec<T>) -> u32 {
+    pub fn create_entity_comp<T: Component>(ecs: &mut MumperECS, components: &mut Vec<T>) -> usize {
         let entity_id = Self::create_entity(ecs);
 
         for i in 0..components.len() {
@@ -76,95 +70,147 @@ impl<A: Component> MumperECS<A> {
     }
 
     // Cascade Deletion : Entity -> Components
-    pub fn remove_entity(ecs: &mut MumperECS<A>, entity_id: u32) {
-        // Remove all Components
-        let ent_id = entity_id as usize;
-        if ent_id >= ecs.entities_bitmask.len() {
+    pub fn remove_entity(state: &mut Mumper, entity_id: usize) {
+        if entity_id >= state.ecs.entities_bitmask.len() {
             return;
         }
 
-        let mask = ecs.entities_bitmask[ent_id];
+        // Remove Entity
+        state.ecs.entities_bitmask.remove(entity_id);
+        state.ecs.entity_ids.remove(entity_id);
 
-        // Bitwise operation
-        // if (mask & TransformStorage::TYPE.mask()) != 0 {
-        //     ecs.transform_storage.remove(entity_id);
-        // }
+        let entity_mask = state.ecs.entities_bitmask[entity_id];
 
-        // Remove all physics components
-        // {
-        //     let mut physics = state.physics.lock().unwrap();
-        //     // remove physic components
-        // };
-
-        // Remove custom components
-        for i in 0..ecs.custom_components.len() {
-            let mut custom_component = ecs.custom_components[i];
-
-            let component_mask = Self::get_mask(custom_component.get_id());
-
-            if Self::has_component(ecs, entity_id as usize, component_mask) {
-                custom_component.remove(ecs, entity_id);
-            }
+        // Remove all Engine Components
+        if Self::has_component(&entity_mask, ComponentType::Transform as usize) {
+            MumperECS::remove_transform(state, entity_id);
         }
 
-        // Remove
-        ecs.entities_bitmask.remove(ent_id);
-        ecs.entity_ids.remove(entity_id as usize);
+        if Self::has_component(&entity_mask, ComponentType::RadiusCollider as usize) {
+            MumperECS::remove_radius_collider(state, entity_id);
+        }
+
+        if Self::has_component(&entity_mask, ComponentType::SegmentsCollider as usize) {
+            MumperECS::remove_segments_collider(state, entity_id);
+        }
+
+        if Self::has_component(&entity_mask, ComponentType::Rigidbody as usize) {
+            MumperECS::remove_rigidbody(state, entity_id);
+        }
+
+        if Self::has_component(&entity_mask, ComponentType::Renderer as usize) {
+            MumperECS::remove_shape_renderer(state, entity_id);
+        }
+
+        if Self::has_component(&entity_mask, ComponentType::NormalsRenderer as usize) {
+            MumperECS::remove_shape_renderer(state, entity_id);
+        }
+
+        // Remove custom components
+        for i in 0..state.components.custom_components.len() {
+            // Limit interaction with the heap
+            if Self::has_component(&entity_mask, i) {
+                state.components.custom_components[i].remove(&mut state.ecs, entity_id);
+            }
+        }
     }
 
     pub fn clear_entities(state: &mut Mumper) {
         let ecs = &mut state.ecs;
 
-        for i in 0..ecs.entity_ids.len() {
-            Self::remove_entity(ecs, i as u32);
+        // Clear Engine Storages
+        state.components.transform_storage.clear_components();
+        state.components.radius_collider_storage.clear_components();
+        state
+            .components
+            .segments_collider_storage
+            .clear_components();
+        state.components.rigidbody_storage.clear_components();
+        state.renderer.shape_renderer_storage.clear_components();
+        state.renderer.normals_renderer_storage.clear_components();
+
+        {
+            let mut physics = state.physics.lock().unwrap();
+
+            physics.transform_storage.clear_components();
+            physics.radius_collider_storage.clear_components();
+            physics.segments_collider_storage.clear_components();
+            physics.rigidbody_storage.clear_components();
+            physics.shape_storage.clear_components();
+            physics.normals_renderer_storage.clear_components();
         }
+
+        // Clear Custom Storages
+        for i in 0..state.components.custom_components.len() {
+            state.components.custom_components[i].clear_components();
+        }
+
+        ecs.entities_bitmask.clear();
+        ecs.entity_ids.clear();
     }
 
-    // COMPONENTS
+    // ANY COMPONENTS
+
+    pub fn has_component(entity_mask: &u64, component_id: usize) -> bool {
+        let component_mask = Self::get_mask(component_id);
+
+        return (entity_mask & component_mask) != 0;
+    }
 
     // add component of a type to an entity with default values
-    pub fn add_component(state: &mut Mumper, entity_id: u32, component_id: usize) {
+    pub fn add_component(state: &mut Mumper, entity_id: usize, component_id: usize) {
+        match component_id {
+            0 => Self::add_default_transform(state, entity_id),
+            1 => Self::add_default_radius_collider(state, entity_id),
+            2 => Self::add_default_segments_collider(state, entity_id),
+            3 => Self::add_default_rigidbody(state, entity_id),
+            4 => Self::add_default_shape_renderer(state, entity_id),
+            5 => Self::add_normals_renderer(state, entity_id),
+            _ => todo!(), // println!("Add Component : No component with ID = {component_id}"),
+        }
+
+        // Add Custom Component
         let ecs = &mut state.ecs;
-
-        // Default Transform
-        if component_id == 0 {
-            state.default_transforms.add_default(ecs, entity_id);
-        }
-
-        // Transform
-        if component_id == 1 {
-            Self::add_default_transform(state, entity_id);
-        }
-
-        // match
-
-        // Get Custom storage = at component_type_id -> add_default
+        state.components.custom_components[component_id].add_default(ecs, entity_id);
     }
 
-    // TODO : add_components
+    // TODO : add_components -> Lock physics once
 
-    pub fn remove_component(state: &mut Mumper, entity_id: u32, component_type_id: usize) {
+    pub fn remove_component(state: &mut Mumper, entity_id: usize, component_id: usize) {
+        match component_id {
+            0 => Self::remove_transform(state, entity_id),
+            1 => Self::remove_radius_collider(state, entity_id),
+            2 => Self::remove_segments_collider(state, entity_id),
+            3 => Self::remove_rigidbody(state, entity_id),
+            4 => Self::remove_shape_renderer(state, entity_id),
+            5 => Self::remove_normals_renderer(state, entity_id),
+            _ => todo!(), // println!("Add Component : No Engine component with ID = {component_id}"),
+        }
+
+        // Remove Custom Component
         let ecs = &mut state.ecs;
-
-        // Default Transform
-        if component_type_id == 0 {
-            state.default_transforms.remove(ecs, entity_id);
-        }
-
-        // Transform
-        if component_type_id == 1 {
-            state.transform_storage.remove(ecs, entity_id);
-        }
-
-        // match
+        state.components.custom_components[component_id].remove(ecs, entity_id);
     }
 
-    // Add Component + sync physics
+    // TODO : remove_components
 
-    pub fn add_default_transform(state: &mut Mumper, entity_id: u32) {
+    // ENGINE COMPONENTS
+    // sync physics
+
+    // TODO : DRY
+
+    // Transform
+    pub fn add_default_transform(state: &mut Mumper, entity_id: usize) {
         let ecs = &mut state.ecs;
 
-        state.transform_storage.add_default(ecs, entity_id);
+        state
+            .components
+            .transform_storage
+            .add_default(ecs, entity_id);
+        state
+            .components
+            .default_transforms
+            .add_default(ecs, entity_id);
 
         {
             let mut physics = state.physics.lock().unwrap();
@@ -175,7 +221,7 @@ impl<A: Component> MumperECS<A> {
 
     pub fn add_transform(
         state: &mut Mumper,
-        entity_id: u32,
+        entity_id: usize,
         position: Vec2,
         rotation: f32,
         scale: Vec2,
@@ -183,9 +229,17 @@ impl<A: Component> MumperECS<A> {
         let ecs = &mut state.ecs;
 
         state
+            .components
             .transform_storage
             .add(ecs, entity_id, position, rotation, scale);
 
+        // Also add Default transform
+        state
+            .components
+            .default_transforms
+            .add(ecs, entity_id, position, rotation, scale);
+
+        // Also add Physics transform
         {
             let mut physics = state.physics.lock().unwrap();
 
@@ -195,125 +249,266 @@ impl<A: Component> MumperECS<A> {
         }
     }
 
-    // TODO : remove_components
+    pub fn remove_transform(state: &mut Mumper, entity_id: usize) {
+        let ecs = &mut state.ecs;
 
-    // Create a pool of Entities -> Object Pooling
+        state.components.transform_storage.remove(ecs, entity_id);
+        state.components.default_transforms.remove(ecs, entity_id);
+
+        {
+            let mut physics = state.physics.lock().unwrap();
+
+            physics.transform_storage.remove(ecs, entity_id);
+        }
+    }
+
+    // Radius Collider
+    pub fn add_default_radius_collider(state: &mut Mumper, entity_id: usize) {
+        let ecs = &mut state.ecs;
+
+        state
+            .components
+            .radius_collider_storage
+            .add_default(ecs, entity_id);
+
+        {
+            let mut physics = state.physics.lock().unwrap();
+
+            physics.radius_collider_storage.add_default(ecs, entity_id);
+        }
+    }
+
+    pub fn add_radius_collider(state: &mut Mumper, entity_id: usize, radius: f32) {
+        let ecs = &mut state.ecs;
+
+        state
+            .components
+            .radius_collider_storage
+            .add(ecs, entity_id, radius);
+
+        {
+            let mut physics = state.physics.lock().unwrap();
+
+            physics.radius_collider_storage.add(ecs, entity_id, radius);
+        }
+    }
+
+    pub fn remove_radius_collider(state: &mut Mumper, entity_id: usize) {
+        let ecs = &mut state.ecs;
+
+        state
+            .components
+            .radius_collider_storage
+            .remove(ecs, entity_id);
+
+        {
+            let mut physics = state.physics.lock().unwrap();
+
+            physics.radius_collider_storage.remove(ecs, entity_id);
+        }
+    }
+
+    // Segment Collider
+    pub fn add_default_segments_collider(state: &mut Mumper, entity_id: usize) {
+        let ecs = &mut state.ecs;
+
+        state
+            .components
+            .segments_collider_storage
+            .add_default(ecs, entity_id);
+
+        {
+            let mut physics = state.physics.lock().unwrap();
+            physics
+                .segments_collider_storage
+                .add_default(ecs, entity_id);
+        }
+    }
+
+    pub fn add_segments_collider(state: &mut Mumper, entity_id: usize, tickness: f32) {
+        let ecs = &mut state.ecs;
+
+        state
+            .components
+            .segments_collider_storage
+            .add(ecs, entity_id, tickness);
+
+        {
+            let mut physics = state.physics.lock().unwrap();
+            physics
+                .segments_collider_storage
+                .add(ecs, entity_id, tickness);
+        }
+    }
+
+    pub fn remove_segments_collider(state: &mut Mumper, entity_id: usize) {
+        let ecs = &mut state.ecs;
+
+        state
+            .components
+            .segments_collider_storage
+            .remove(ecs, entity_id);
+
+        {
+            let mut physics = state.physics.lock().unwrap();
+            physics.segments_collider_storage.remove(ecs, entity_id);
+        }
+    }
+
+    // Rigidbody
+    pub fn add_default_rigidbody(state: &mut Mumper, entity_id: usize) {
+        let ecs = &mut state.ecs;
+
+        state
+            .components
+            .rigidbody_storage
+            .add_default(ecs, entity_id);
+
+        {
+            let mut physics = state.physics.lock().unwrap();
+            physics.rigidbody_storage.add_default(ecs, entity_id);
+        }
+    }
+
+    pub fn add_rigidbody(
+        state: &mut Mumper,
+        entity_id: usize,
+        velocity: Vec2,
+        rotation_speed: f32,
+        bounciness: f32,
+    ) {
+        let ecs = &mut state.ecs;
+
+        state.components.rigidbody_storage.add(
+            ecs,
+            entity_id,
+            velocity,
+            rotation_speed,
+            bounciness,
+        );
+
+        {
+            let mut physics = state.physics.lock().unwrap();
+            physics
+                .rigidbody_storage
+                .add(ecs, entity_id, velocity, rotation_speed, bounciness);
+        }
+    }
+
+    pub fn remove_rigidbody(state: &mut Mumper, entity_id: usize) {
+        let ecs = &mut state.ecs;
+
+        state.components.rigidbody_storage.remove(ecs, entity_id);
+
+        {
+            let mut physics = state.physics.lock().unwrap();
+            physics.rigidbody_storage.remove(ecs, entity_id);
+        }
+    }
+
+    // Renderer
+    pub fn add_default_shape_renderer(state: &mut Mumper, entity_id: usize) {
+        let ecs = &mut state.ecs;
+
+        state
+            .renderer
+            .shape_renderer_storage
+            .add_default(ecs, entity_id);
+
+        {
+            let mut physics = state.physics.lock().unwrap();
+
+            physics.shape_storage.add_default(ecs, entity_id);
+        }
+    }
+
+    pub fn add_shape_renderer(
+        state: &mut Mumper,
+        entity_id: usize,
+        vertices: Vec<Vec2>,
+        stroke: Stroke,
+    ) {
+        let ecs = &mut state.ecs;
+
+        state
+            .renderer
+            .shape_renderer_storage
+            .add(ecs, entity_id, vertices.clone(), stroke);
+
+        {
+            let mut physics = state.physics.lock().unwrap();
+
+            physics
+                .shape_storage
+                .add(ecs, entity_id, vertices.clone(), vertices);
+        }
+    }
+
+    pub fn remove_shape_renderer(state: &mut Mumper, entity_id: usize) {
+        let ecs = &mut state.ecs;
+
+        state.renderer.shape_renderer_storage.remove(ecs, entity_id);
+
+        {
+            let mut physics = state.physics.lock().unwrap();
+
+            physics.shape_storage.remove(ecs, entity_id);
+        }
+    }
+
+    // Normals Renderer
+    pub fn add_normals_renderer(state: &mut Mumper, entity_id: usize) {
+        let ecs = &mut state.ecs;
+
+        state
+            .renderer
+            .normals_renderer_storage
+            .add_default(ecs, entity_id);
+
+        {
+            let mut physics = state.physics.lock().unwrap();
+
+            physics.normals_renderer_storage.add_default(ecs, entity_id);
+        }
+    }
+
+    pub fn remove_normals_renderer(state: &mut Mumper, entity_id: usize) {
+        let ecs = &mut state.ecs;
+
+        state
+            .renderer
+            .normals_renderer_storage
+            .remove(ecs, entity_id);
+
+        {
+            let mut physics = state.physics.lock().unwrap();
+
+            physics.normals_renderer_storage.remove(ecs, entity_id);
+        }
+    }
+
+    // ARCHETYPES + POOLING
+
+    // Create a pool of Entities
     pub fn create_pool() {
         todo!()
     }
 }
 
-pub enum EngineComponent<A: Component> {
-    Transform(ShapeRendererStorage),
-    Velocity(NormalsRendererStorage),
-    Extension(A),
-}
-
-#[repr(u8)]
-pub enum ComponentType {
-    DefaultTransform = 0,
-    Transform = 1,
-    RadiusCollider = 2,
-    SegmentsCollider = 3,
-    Rigidbody = 4,
-    Renderer = 5,
-}
-
-// COMPONENTS DEFINITIONS
-
-// Main Components
-
-component_storage!(
-    struct ShapeRendererStorage {
-        // TODO : Flatten
-        calculated_vertices: Vec<Vec2>,
-        strokes: Stroke,
-    },
-    add_default: |storage: &mut ShapeRendererStorage<A>, ecs: &mut MumperECS<A>, entity_id: u32| {
-        storage.add(ecs, entity_id, vec![], Stroke::new(1.0, Color32::RED));
-    }
-);
-
-component_storage!(
-    struct NormalsRendererStorage {
-        normal_pos: Vec<Vec2>,
-        edge_normals: Vec<Vec2>,
-    },
-    add_default: |storage: &mut NormalsRendererStorage, ecs: &mut MumperECS, entity_id: u32| {
-        storage.add(ecs, entity_id, vec![], vec![]);
-    }
-);
-
-// CameraStorage
-
-// Physics Components
-
-// Only on physics side
-component_storage!(
-    struct PhysicsShapeStorage {
-        vertices: Vec<Vec2>,
-        calculated_vertices: Vec<Vec2>,
-    },
-    add_default: |storage: &mut PhysicsShapeStorage, ecs: &mut MumperECS, entity_id: u32| {
-        storage.add(ecs, entity_id, vec![], vec![]);
-    }
-);
-
-// Every Physics Component depend on Transform
-component_storage!(
-    struct TransformStorage {
-        positions: Vec2,
-        rotations: f32,
-        scales: Vec2,
-    },
-    add_default: |storage: &mut TransformStorage, ecs: &mut MumperECS, entity_id: u32| {
-        storage.add(ecs, entity_id, Vec2::ZERO, 0.0, Vec2::ONE);
-    }
-);
-
-component_storage!(
-    struct RadiusColliderStorage {
-        radiuses: f32,
-        // is_trigger: bool,
-    },
-    add_default: |storage: &mut RadiusColliderStorage, ecs: &mut MumperECS, entity_id: u32| {
-        storage.add(ecs, entity_id, 1.0);
-    }
-);
-
-component_storage!(
-    struct SegmentColliderStorage {
-        edge_thicknesses: f32,
-        // is_trigger: bool,
-    },
-    add_default: |storage: &mut SegmentColliderStorage, ecs: &mut MumperECS, entity_id: u32| {
-        storage.add(ecs, entity_id, 1.0);
-    }
-);
-
-component_storage!(
-    struct RigidbodyStorage {
-        // Mass,
-        velocities: Vec2, // meters / sec
-        rotation_speeds: f32,
-        bounciness: f32,
-    },
-    add_default: |storage: &mut RigidbodyStorage, ecs: &mut MumperECS, entity_id: u32| {
-        storage.add(ecs, entity_id, Vec2::ZERO, 0.0, 0.8);
-    }
-);
-
 // Allow custom components
 pub trait Component: 'static {
     // Add component with default values
-    fn add_default(&mut self, ecs: &mut MumperECS, entity_id: u32);
+    fn add_default(&mut self, ecs: &mut MumperECS, entity_id: usize);
 
-    fn remove(&mut self, ecs: &mut MumperECS, entity_id: u32);
+    fn remove(&mut self, ecs: &mut MumperECS, entity_id: usize);
 
     fn get_id(&self) -> usize;
+
+    fn clear_components(&mut self);
 }
 
 // Each system hold one ComponentStorage / Component
+// TODO : Component Object
 #[macro_export]
 macro_rules! component_storage {
     (
@@ -327,17 +522,14 @@ macro_rules! component_storage {
             // Default data
             pub id: usize, // id is defined per instance (storage) rather than type
             pub sparse: Vec<usize>,
-            pub entities: Vec<u32>,
+            pub entities: Vec<usize>,
 
             // Custom data
             $( pub $field_name: Vec<$field_type>, )+
         }
 
         impl $storage_name {
-            pub fn new(ecs: &mut MumperECS<$storage_name>) -> Self {
-                let id = ecs.component_count.clone() as usize;
-                ecs.component_count += 1;
-
+            pub fn new(id : usize) -> Self {
                 Self {
                     id,
                     sparse: Vec::new(),
@@ -348,14 +540,14 @@ macro_rules! component_storage {
 
             // Add Component
 
-            pub fn add(&mut self, ecs: &mut MumperECS<$storage_name>, entity_id: u32, $($field_name: $field_type),+) {
+            pub fn add(&mut self, ecs: &mut MumperECS, entity_id: usize, $($field_name: $field_type),+) {
                 let dense_idx = self.entities.len();
 
-                if entity_id as usize >= self.sparse.len() {
-                    self.sparse.resize(entity_id as usize + 1, usize::MAX);
+                if entity_id >= self.sparse.len() {
+                    self.sparse.resize(entity_id + 1, usize::MAX);
                 }
 
-                self.sparse[entity_id as usize] = dense_idx;
+                self.sparse[entity_id] = dense_idx;
                 self.entities.push(entity_id);
 
                 // Push custom vectors
@@ -363,24 +555,28 @@ macro_rules! component_storage {
 
                 // Update bitmask
                 let mask = MumperECS::get_mask(self.id);
-                MumperECS::add_mask(ecs, entity_id as usize, mask);
+                MumperECS::add_mask(&mut ecs.entities_bitmask[entity_id], mask);
             }
 
             // Use Component
 
-            pub fn get_component(&self, entity_id: &u32) -> ($( &$field_type ),+) {
-                let component_id = self.sparse[*entity_id as usize];
+            pub fn get_component_id(&self, entity_id: usize) -> usize {
+                return self.sparse[entity_id];
+            }
+
+            pub fn get_component(&self, entity_id: usize) -> ($( &$field_type ),+) {
+                let component_id = self.sparse[entity_id];
 
                 return ($( &self.$field_name[component_id] ),+);
             }
 
-            pub fn get_mut_component(&mut self, entity_id: &u32) -> ($( &mut $field_type ),+) {
-                let component_id = self.sparse[*entity_id as usize];
+            pub fn get_mut_component(&mut self, entity_id: usize) -> ($( &mut $field_type ),+) {
+                let component_id = self.sparse[entity_id];
 
                 return ($( &mut self.$field_name[component_id] ),+);
             }
 
-            pub fn iterate_over_components<F: FnMut(u32, $( &mut $field_type ),+)>(&mut self, mut action: F) {
+            pub fn iterate_over_components<F: FnMut(usize, $( &mut $field_type ),+)>(&mut self, mut action: F) {
                 for i in 0..self.entities.len() {
                     let entity_id = self.entities[i];
 
@@ -388,24 +584,21 @@ macro_rules! component_storage {
                     action(entity_id, $( &mut self.$field_name[i] ),+)
                 }
             }
-
-            // Remove Component
-
-            pub fn clear_components(&mut self) {
-                self.sparse.clear();
-                self.entities.clear();
-
-                $( self.$field_name.clear(); )+
-            }
         }
 
         impl Component for $storage_name {
-            // TODO : add_default / storage instance
-            fn add_default(&mut self, ecs: &mut MumperECS<$storage_name>, entity_id: u32) {
+            fn get_id(&self) -> usize {
+                return self.id;
+            }
+
+            // TODO : add_default per storage instance
+            fn add_default(&mut self, ecs: &mut MumperECS, entity_id: usize) {
                 ($add_default)(self, ecs, entity_id);
             }
 
-            fn remove(&mut self, ecs: &mut MumperECS<$storage_name>, entity_id: u32) {
+            // Remove Component
+
+            fn remove(&mut self, ecs: &mut MumperECS, entity_id: usize) {
                 let ent_id = entity_id as usize;
 
                 if ent_id >= self.sparse.len() || self.sparse[ent_id] == usize::MAX {
@@ -425,7 +618,7 @@ macro_rules! component_storage {
 
                 // Update sparse array
                 let moved_entity_id = self.entities[index_to_remove];
-                self.sparse[moved_entity_id as usize] = index_to_remove;
+                self.sparse[moved_entity_id] = index_to_remove;
 
                 // Remove (swapped) Last Entity
                 self.sparse[ent_id] = usize::MAX;
@@ -434,14 +627,119 @@ macro_rules! component_storage {
 
                 // Update bitmask
                 let mask = MumperECS::get_mask(self.id);
-                MumperECS::remove_mask(ecs, entity_id as usize, mask);
+                MumperECS::remove_mask(&mut ecs.entities_bitmask[entity_id], mask);
             }
 
-            fn get_id(&self) -> usize {
-                return self.id;
+            fn clear_components(&mut self) {
+                self.sparse.clear();
+                self.entities.clear();
+
+                $( self.$field_name.clear(); )+
             }
         }
     };
 }
 
 pub(crate) use component_storage;
+
+#[repr(u8)]
+pub enum ComponentType {
+    Transform = 0,
+    RadiusCollider = 1,
+    SegmentsCollider = 2,
+    Rigidbody = 3,
+    Renderer = 4,
+    NormalsRenderer = 5,
+}
+
+// TODO : Centralize Components
+pub struct Components {
+    // Components
+    pub default_transforms: TransformStorage,
+    // Physics Components (Shared with physics)
+    pub transform_storage: TransformStorage,
+    pub radius_collider_storage: RadiusColliderStorage,
+    pub segments_collider_storage: SegmentColliderStorage,
+    pub rigidbody_storage: RigidbodyStorage,
+    custom_components: Vec<Box<dyn Component>>,
+}
+
+impl Components {
+    pub fn new(ecs: &mut MumperECS) -> Self {
+        let default_transforms = TransformStorage::new(MumperECS::register_storage_id(ecs));
+        let transform_storage = TransformStorage::new(MumperECS::register_storage_id(ecs));
+
+        let radius_collider_storage =
+            RadiusColliderStorage::new(MumperECS::register_storage_id(ecs));
+        let segments_collider_storage =
+            SegmentColliderStorage::new(MumperECS::register_storage_id(ecs));
+        let rigidbody_storage = RigidbodyStorage::new(MumperECS::register_storage_id(ecs));
+
+        return Self {
+            default_transforms,
+            transform_storage,
+            radius_collider_storage,
+            segments_collider_storage,
+            rigidbody_storage,
+            custom_components: vec![],
+        };
+    }
+}
+
+// PHYSICS COMPONENTS
+
+// Every Physics Component depend on Transform
+// Used for transform & default transform storage
+component_storage!(
+    struct TransformStorage {
+        positions: Vec2,
+        rotations: f32,
+        scales: Vec2,
+    },
+    add_default: |storage: &mut TransformStorage, ecs: &mut MumperECS, entity_id: usize| {
+        storage.add(ecs, entity_id, Vec2::ZERO, 0.0, Vec2::ONE);
+    }
+);
+
+// Only on physics side
+component_storage!(
+    struct PhysicsShapeStorage {
+        vertices: Vec<Vec2>,
+        calculated_vertices: Vec<Vec2>,
+    },
+    add_default: |storage: &mut PhysicsShapeStorage, ecs: &mut MumperECS, entity_id: usize| {
+        storage.add(ecs, entity_id, vec![], vec![]);
+    }
+);
+
+component_storage!(
+    struct RadiusColliderStorage {
+        radiuses: f32,
+        // is_trigger: bool,
+    },
+    add_default: |storage: &mut RadiusColliderStorage, ecs: &mut MumperECS, entity_id: usize| {
+        storage.add(ecs, entity_id, 1.0);
+    }
+);
+
+component_storage!(
+    struct SegmentColliderStorage {
+        edge_thicknesses: f32,
+        // is_trigger: bool,
+    },
+    add_default: |storage: &mut SegmentColliderStorage, ecs: &mut MumperECS, entity_id: usize| {
+        storage.add(ecs, entity_id, 1.0);
+    }
+);
+
+component_storage!(
+    struct RigidbodyStorage {
+        // Mass,
+        velocities: Vec2, // meters / sec
+        rotation_speeds: f32,
+        bounciness: f32,
+    },
+    add_default: |storage: &mut RigidbodyStorage, ecs: &mut MumperECS, entity_id: usize| {
+        storage.add(ecs, entity_id, Vec2::ZERO, 0.0, 0.8);
+    }
+);
