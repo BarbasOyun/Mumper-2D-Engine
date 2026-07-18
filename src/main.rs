@@ -149,19 +149,25 @@ impl MumperDemo {
         let segments = settings.segments;
         let vertices = gears::circle_vertices(radius, segments);
 
-        state.create_shape(
-            vertices,
-            true,
-            radius,
-            0.1,
-            world_pos,
-            0.0,
-            Vec2::ONE,
-            settings.polygon_velocity,
-            -1.0,
-            1.0,
-            Stroke::new(settings.stroke_width, settings.stroke_color),
-        );
+        // create entity
+        // add renderer
+        // add transform
+        // add radius collider
+        // add Rigidbody
+
+        // state.create_shape(
+        //     vertices,
+        //     true,
+        //     radius,
+        //     0.1,
+        //     world_pos,
+        //     0.0,
+        //     Vec2::ONE,
+        //     settings.polygon_velocity,
+        //     -1.0,
+        //     1.0,
+        //     Stroke::new(settings.stroke_width, settings.stroke_color),
+        // );
     }
 
     // UI COMPONENTS
@@ -249,21 +255,26 @@ impl MumperDemo {
             Vec2::new(-10.0, -10.0),
         ];
 
-        state.create_shape(
-            square_vertices,
-            false,
-            0.0,
-            0.1,
-            Vec2::ZERO,
-            0.785,
-            Vec2::ONE,
-            Vec2::ZERO,
-            0.0,
-            0.0,
-            Stroke::new(5.0, Color32::LIGHT_YELLOW),
-        );
+        // TODO :
+        // create entity
+        // add renderer + transform
+        // add segments collider
 
-        // 3 Circles
+        // state.create_shape(
+        //     square_vertices,
+        //     false,
+        //     0.0,
+        //     0.1,
+        //     Vec2::ZERO,
+        //     0.785,
+        //     Vec2::ONE,
+        //     Vec2::ZERO,
+        //     0.0,
+        //     0.0,
+        //     Stroke::new(5.0, Color32::LIGHT_YELLOW),
+        // );
+
+        // 3 Default Circles
         let (
             radiuses,
             vertices,
@@ -277,19 +288,24 @@ impl MumperDemo {
         ) = Self::default_polygons();
 
         for i in 0..radiuses.len() {
-            state.create_shape(
-                vertices[i].clone(),
-                true,
-                radiuses[i],
-                0.1,
-                positions[i],
-                rotations[i],
-                scales[i],
-                velocities[i],
-                rotation_speeds[i],
-                bounciness[i],
-                strokes[i],
-            );
+            // TODO :
+            // add renderer + transform
+            // add radius collider
+            // add rigidbody
+
+            // state.create_shape(
+            //     vertices[i].clone(),
+            //     true,
+            //     radiuses[i],
+            //     0.1,
+            //     positions[i],
+            //     rotations[i],
+            //     scales[i],
+            //     velocities[i],
+            //     rotation_speeds[i],
+            //     bounciness[i],
+            //     strokes[i],
+            // );
         }
     }
 
@@ -312,11 +328,7 @@ impl MumperDemo {
         let circle_vertices2 = gears::circle_vertices(radiuses[1], 20);
         let circle_vertices3 = gears::circle_vertices(radiuses[2], 20);
 
-        let vertices: Vec<Vec<Vec2>> = vec![
-            circle_vertices1,
-            circle_vertices2,
-            circle_vertices3,
-        ];
+        let vertices: Vec<Vec<Vec2>> = vec![circle_vertices1, circle_vertices2, circle_vertices3];
 
         // Transforms
         let positions: Vec<Vec2> = vec![

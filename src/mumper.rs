@@ -13,11 +13,19 @@ use crate::mumper_ecs::*;
 // Settings + Rendering
 // TODO :
 // Reset Scene = Reset Physics
+// Default Transforms
 pub struct Mumper {
     pub settings: Settings,
     // editor_state: EditorState, (Camera)
     // ECS
     pub ecs: MumperECS,
+    // Components
+    pub default_transforms: TransformStorage,
+    // Physics Components (Shared with physics)
+    pub transform_storage: TransformStorage,
+    pub radius_collider_storage: RadiusColliderStorage,
+    pub segments_collider_storage: SegmentColliderStorage,
+    pub rigidbody_storage: RigidbodyStorage,
     // Physics
     pub physics: Arc<Mutex<MumperPhysics>>,
     pub is_paused: Arc<AtomicBool>, // only pause physics but not rendering
@@ -27,16 +35,30 @@ pub struct Mumper {
 
 impl Mumper {
     pub fn new(cc: &CreationContext) -> Self {
+        // ECS
+        let ecs = MumperECS::new();
+
+        let default_transforms = TransformStorage::new();
+        let transform_storage = TransformStorage::new();
+
+        let radius_collider_storage = RadiusColliderStorage::new();
+        let segments_collider_storage = SegmentColliderStorage::new();
+        let rigidbody_storage = RigidbodyStorage::new();
+
+        // Physics
         let physics: Arc<Mutex<MumperPhysics>> = Arc::new(Mutex::new(MumperPhysics::new()));
-
         let is_paused: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
-
         Self::start_physic_thread(&physics, &is_paused);
 
         Self {
             settings: Settings::new(),
             // ECS
-            ecs: MumperECS::new(),
+            ecs,
+            default_transforms,
+            transform_storage,
+            radius_collider_storage,
+            segments_collider_storage,
+            rigidbody_storage,
             // Physics
             physics,
             is_paused,
@@ -191,67 +213,26 @@ impl Mumper {
         self.is_paused.store(is_paused, Ordering::Relaxed);
     }
 
-    /// Create an Object
+    // Create a simple Entity
     pub fn create_shape(
         &mut self,
         vertices: Vec<Vec2>,
-        is_radius: bool,
         radius: f32,
-        thickness: f32,
         position: Vec2,
         rotation: f32,
         scale: Vec2,
-        velocity: Vec2,
-        rotation_speed: f32,
-        bounciness: f32,
         stroke: Stroke,
     ) {
         // println!("Create Shape at : {position}");
-        let entity_id = MumperECS::create_physics_entity(
-            self,
-            position,
-            rotation,
-            scale,
-            vertices,
-            is_radius,
-            radius,
-            thickness,
-            velocity,
-            rotation_speed,
-            bounciness,
-        );
 
-        // self.default_positions.push(position.clone());
-        // self.default_rotations.push(rotation.clone());
-        // self.default_scales.push(scale.clone());
+        // create entity
+        // add renderer
+        // add transform
+        // return entity_id
 
-        // Add Shape to Physic engine
-        // {
-        //     let mut physics = self.physics.lock().unwrap();
-
-        //     // Add Radius Collider
-        //     // Add Rigidbody
-
-        //     // Create Entity
-        //     let entity_id = physics.create_physics_entity(position, rotation, scale);
-
-        //     // Add RadiusCollider Component
-        //     physics.radius_collider_storage.add(entity_id, radius);
-
-        //     // Object
-        //     physics.vertices.push(vertices);
-        //     physics.edge_normals.push(vec![]);
-        //     physics.calculated_vertices.push(default_image);
-        //     // Physic
-        //     physics.velocities.push(velocity);
-        //     physics.rotation_speeds.push(rotation_speed);
-        //     physics.bounciness.push(bounciness);
-        // };
-
-        self.renderer
-            .shape_renderer_storage
-            .add(entity_id, vec![], stroke);
-        //self.renderer.strokes.push(stroke);
+        // self.renderer
+        //     .shape_renderer_storage
+        //     .add(&mut self.ecs, entity_id, vec![], stroke);
     }
 }
 

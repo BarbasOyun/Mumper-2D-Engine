@@ -99,7 +99,7 @@ impl MumperRenderer {
             state.renderer.normals_renderer_storage = physics.normals_renderer_storage.clone();
 
             // Get Transform
-            state.ecs.transform_storage = physics.transform_storage.clone();
+            state.transform_storage = physics.transform_storage.clone();
         };
 
         // Draw normals
