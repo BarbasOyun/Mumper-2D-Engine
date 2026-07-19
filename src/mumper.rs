@@ -76,15 +76,15 @@ impl Mumper {
         let dt = ui.input(|i| i.stable_dt); // DeltaTime in second
         let fps = 1.0 / dt;
 
-        // Web Physics
-        // Handle pause
+        // Web : Tick Physics
         #[cfg(target_arch = "wasm32")]
         {
-            if state.is_paused.load(std::sync::atomic::Ordering::Relaxed) {
-                continue;
+            if self.is_paused.load(std::sync::atomic::Ordering::Relaxed) {
+                // continue;
+                return (dt, fps);
             }
 
-            let mut physics = state.physics.lock().unwrap();
+            let mut physics = self.physics.lock().unwrap();
 
             physics.tick(dt);
         }

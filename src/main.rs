@@ -167,13 +167,14 @@ impl MumperDemo {
     fn create_wall(
         mumper: &mut Mumper,
         world_pos: Vec2,
+        rotation: f32,
         vertices: Vec<Vec2>,
         thickness: f32,
         stroke: Stroke,
     ) {
         // Create entity + Add components = Polygon
         let entity_id = MumperECS::create_entity(&mut mumper.ecs);
-        MumperECS::add_transform(mumper, entity_id, world_pos, 0.0, Vec2::ONE);
+        MumperECS::add_transform(mumper, entity_id, world_pos, rotation, Vec2::ONE);
         MumperECS::add_shape_renderer(mumper, entity_id, vertices, stroke);
         MumperECS::add_segments_collider(mumper, entity_id, thickness);
     }
@@ -253,8 +254,6 @@ impl MumperDemo {
     }
 
     fn default_scene(mumper: &mut Mumper) {
-        // Default Scene
-
         // Square
         let square_vertices: Vec<Vec2> = vec![
             Vec2::new(10.0, -10.0),
@@ -265,71 +264,9 @@ impl MumperDemo {
 
         let square_stroke = Stroke::new(5.0, Color32::LIGHT_YELLOW);
 
-        Self::create_wall(mumper, Vec2::ZERO, square_vertices, 0.1, square_stroke);
+        Self::create_wall(mumper, Vec2::ZERO, 0.785, square_vertices, 0.1, square_stroke);
 
-        // state.create_shape(
-        //     square_vertices,
-        //     false,
-        //     0.0,
-        //     0.1,
-        //     Vec2::ZERO,
-        //     0.785,
-        //     Vec2::ONE,
-        //     Vec2::ZERO,
-        //     0.0,
-        //     0.0,
-        //     Stroke::new(5.0, Color32::LIGHT_YELLOW),
-        // );
-
-        // 3 Default Circles
-        let (
-            radiuses,
-            vertices,
-            positions,
-            rotations,
-            scales,
-            velocities,
-            rotation_speeds,
-            bounciness,
-            strokes,
-        ) = Self::default_polygons();
-
-        for i in 0..radiuses.len() {
-            // TODO :
-            // add renderer + transform
-            // add radius collider
-            // add rigidbody
-
-            // state.create_shape(
-            //     vertices[i].clone(),
-            //     true,
-            //     radiuses[i],
-            //     0.1,
-            //     positions[i],
-            //     rotations[i],
-            //     scales[i],
-            //     velocities[i],
-            //     rotation_speeds[i],
-            //     bounciness[i],
-            //     strokes[i],
-            // );
-
-            Self::create_shape(mumper, positions[i], vertices[i].clone(), radiuses[i], velocities[i], strokes[i]);
-        }
-    }
-
-    // Default Scene = 1 Square + 3 Circles
-    fn default_polygons() -> (
-        Vec<f32>,
-        Vec<Vec<Vec2>>,
-        Vec<Vec2>,
-        Vec<f32>,
-        Vec<Vec2>,
-        Vec<Vec2>,
-        Vec<f32>,
-        Vec<f32>,
-        Vec<Stroke>,
-    ) {
+        // Circles
         let radiuses: Vec<f32> = vec![1.0, 1.5, 2.0];
 
         // Vertices
@@ -367,17 +304,9 @@ impl MumperDemo {
             Stroke::new(2.0, Color32::BLUE),
         ];
 
-        return (
-            radiuses,
-            vertices,
-            positions,
-            rotations,
-            scales,
-            velocities,
-            rotation_speeds,
-            bounciness,
-            strokes,
-        );
+        for i in 0..radiuses.len() {
+            Self::create_shape(mumper, positions[i], vertices[i].clone(), radiuses[i], velocities[i], strokes[i]);
+        }
     }
 }
 
@@ -401,3 +330,5 @@ impl eframe::App for MumperDemo {
         });
     }
 }
+
+// TOOD : struct Polygon

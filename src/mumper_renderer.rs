@@ -3,7 +3,6 @@ use glam::Vec2;
 use std::sync::atomic::Ordering;
 
 use crate::Mumper;
-use crate::gears;
 use crate::mumper_ecs::*;
 
 // TODO : Double-Buffered State

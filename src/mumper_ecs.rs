@@ -325,19 +325,19 @@ impl MumperECS {
         }
     }
 
-    pub fn add_segments_collider(state: &mut Mumper, entity_id: usize, tickness: f32) {
+    pub fn add_segments_collider(state: &mut Mumper, entity_id: usize, thickness: f32) {
         let ecs = &mut state.ecs;
 
         state
             .components
             .segments_collider_storage
-            .add(ecs, entity_id, tickness);
+            .add(ecs, entity_id, thickness);
 
         {
             let mut physics = state.physics.lock().unwrap();
             physics
                 .segments_collider_storage
-                .add(ecs, entity_id, tickness);
+                .add(ecs, entity_id, thickness);
         }
     }
 
