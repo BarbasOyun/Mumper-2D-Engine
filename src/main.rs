@@ -1,12 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
-use mumper::Mumper;
-use mumper::MumperECS;
-use mumper::MumperRenderer;
-use mumper::gears;
-
 use eframe::{CreationContext, egui::*};
 use glam::Vec2;
 use std::sync::atomic::Ordering;
+
+use mumper::Mumper;
+use mumper::MumperRenderer;
+pub(crate) use mumper::component_storage;
+use mumper::gears;
+use mumper::mumper_ecs::*;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
@@ -91,12 +92,13 @@ impl DemoSettings {
 }
 
 // TODO : Oscillating Color Component
-
 struct MumperDemo {
     // Mumper Implementation
     mumper: Mumper,
     // Custom App Data
     settings: DemoSettings,
+    // Custom Component
+    oscillating_color_storage: OscillatingColorStorage,
 }
 
 impl MumperDemo {
@@ -104,9 +106,19 @@ impl MumperDemo {
         let settings = DemoSettings::new();
         let mut mumper: Mumper = Mumper::new(cc);
 
-        Self::default_scene(&mut mumper);
+        // Register Custom Component
+        let oscillating_color_storage =
+            OscillatingColorStorage::new(MumperECS::register_storage_id(&mut mumper.ecs));
 
-        return Self { mumper, settings };
+        let mut mumper_demo = Self {
+            mumper,
+            settings,
+            oscillating_color_storage,
+        };
+
+        mumper_demo.default_scene();
+
+        return mumper_demo;
     }
 
     fn reset_settings(&mut self) {
@@ -116,7 +128,17 @@ impl MumperDemo {
 
     fn reset_scene(&mut self) {
         self.mumper.clear_scene();
-        Self::default_scene(&mut self.mumper);
+        self.default_scene();
+    }
+
+    fn logic_update(&mut self) {
+        self.oscillating_components_logic();
+    }
+
+    fn oscillating_components_logic(&mut self) {
+        for i in 0..self.oscillating_color_storage.entities.len() {
+            // TODO
+        }
     }
 
     fn input_handling(&mut self, response: Response, input_state: &InputState) {
@@ -134,33 +156,44 @@ impl MumperDemo {
 
         // LClick = Create Polygon
         if lclick_released && response.hovered() {
-            let settings = &mut self.settings;
+            let settings = &self.settings;
 
-            let world_pos = MumperRenderer::screen_to_world(&self.mumper.renderer, &global_pointer_position);
+            let world_pos =
+                MumperRenderer::screen_to_world(&self.mumper.renderer, &global_pointer_position);
             let radius = settings.radius;
             let segments = settings.segments;
             let vertices = gears::circle_vertices(radius, segments);
             let stroke = Stroke::new(settings.stroke_width, settings.stroke_color);
 
-            Self::create_shape(&mut self.mumper, world_pos, vertices, radius, settings.polygon_velocity, stroke);
+            self.create_shape(
+                world_pos,
+                vertices,
+                radius,
+                settings.polygon_velocity,
+                stroke,
+            );
         }
     }
 
     // Create a Shape with a Radius Collider & Rigidbody
     fn create_shape(
-        mumper: &mut Mumper,
+        &mut self,
         world_pos: Vec2,
         vertices: Vec<Vec2>,
         radius: f32,
         velocity: Vec2,
         stroke: Stroke,
     ) {
+        let mumper = &mut self.mumper;
+
         // Create entity + Add components = Polygon
         let entity_id = MumperECS::create_entity(&mut mumper.ecs);
         MumperECS::add_transform(mumper, entity_id, world_pos, 0.0, Vec2::ONE);
         MumperECS::add_shape_renderer(mumper, entity_id, vertices, stroke);
         MumperECS::add_radius_collider(mumper, entity_id, radius);
         MumperECS::add_rigidbody(mumper, entity_id, velocity, -1.0, 1.0);
+        self.oscillating_color_storage
+            .add(&mut mumper.ecs, entity_id, 1.0, 0.0, 2.0);
     }
 
     // Create a (static) Wall
@@ -253,7 +286,9 @@ impl MumperDemo {
         });
     }
 
-    fn default_scene(mumper: &mut Mumper) {
+    fn default_scene(&mut self) {
+        let mumper = &mut self.mumper;
+
         // Square
         let square_vertices: Vec<Vec2> = vec![
             Vec2::new(10.0, -10.0),
@@ -264,7 +299,14 @@ impl MumperDemo {
 
         let square_stroke = Stroke::new(5.0, Color32::LIGHT_YELLOW);
 
-        Self::create_wall(mumper, Vec2::ZERO, 0.785, square_vertices, 0.1, square_stroke);
+        Self::create_wall(
+            mumper,
+            Vec2::ZERO,
+            0.785,
+            square_vertices,
+            0.1,
+            square_stroke,
+        );
 
         // Circles
         let radiuses: Vec<f32> = vec![1.0, 1.5, 2.0];
@@ -305,7 +347,13 @@ impl MumperDemo {
         ];
 
         for i in 0..radiuses.len() {
-            Self::create_shape(mumper, positions[i], vertices[i].clone(), radiuses[i], velocities[i], strokes[i]);
+            self.create_shape(
+                positions[i],
+                vertices[i].clone(),
+                radiuses[i],
+                velocities[i],
+                strokes[i],
+            );
         }
     }
 }
@@ -323,6 +371,8 @@ impl eframe::App for MumperDemo {
             // Mumper Rendering
             let response = self.mumper.game_update(ui);
 
+            self.logic_update();
+
             // Inputs
             ui.input(|input_state: &InputState| {
                 self.input_handling(response, input_state);
@@ -332,3 +382,14 @@ impl eframe::App for MumperDemo {
 }
 
 // TOOD : struct Polygon
+
+component_storage!(
+    struct OscillatingColorStorage {
+        r_rad: f32,
+        g_rad: f32,
+        b_rad: f32,
+    },
+    add_default: |storage: &mut OscillatingColorStorage, ecs: &mut MumperECS, entity_id: usize| {
+        storage.add(ecs, entity_id, 0.0, 0.0, 0.0);
+    }
+);

@@ -1,5 +1,4 @@
 use eframe::{CreationContext, egui::*};
-use glam::Vec2;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread; // Doesn't work on Browser
@@ -11,9 +10,6 @@ use crate::gears;
 use crate::mumper_ecs::*;
 
 // Settings + Rendering
-// TODO :
-// Reset Scene = Reset Physics
-// Default Transforms
 pub struct Mumper {
     pub settings: Settings,
     // editor_state: EditorState, (Camera)
@@ -198,28 +194,6 @@ impl Mumper {
 
     pub fn pause_physic(&mut self, is_paused: bool) {
         self.is_paused.store(is_paused, Ordering::Relaxed);
-    }
-
-    // Create a simple Entity
-    pub fn create_shape(
-        &mut self,
-        vertices: Vec<Vec2>,
-        radius: f32,
-        position: Vec2,
-        rotation: f32,
-        scale: Vec2,
-        stroke: Stroke,
-    ) {
-        // println!("Create Shape at : {position}");
-
-        // create entity
-        // add renderer
-        // add transform
-        // return entity_id
-
-        // self.renderer
-        //     .shape_renderer_storage
-        //     .add(&mut self.ecs, entity_id, vec![], stroke);
     }
 }
 

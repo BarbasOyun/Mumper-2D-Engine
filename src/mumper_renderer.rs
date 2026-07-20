@@ -13,7 +13,6 @@ use crate::mumper_ecs::*;
 //     pub rotation: f32,
 // }
 
-// // Wrap a vector of these updates in an Arc<Mutex>
 // pub type SharedPhysicsBuffer = Arc<Mutex<Vec<PhysicsStateUpdate>>>;
 
 pub struct MumperRenderer {
