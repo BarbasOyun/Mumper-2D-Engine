@@ -91,14 +91,15 @@ impl DemoSettings {
     }
 }
 
+const MAX_RAD: f32 = std::f32::consts::PI * 2.0;
+
 // TODO : Oscillating Color Component
 struct MumperDemo {
     // Mumper Implementation
     mumper: Mumper,
     // Custom App Data
     settings: DemoSettings,
-    // Custom Component
-    oscillating_color_storage: OscillatingColorStorage,
+    ocillating_color_storage_id: usize,
 }
 
 impl MumperDemo {
@@ -107,13 +108,14 @@ impl MumperDemo {
         let mut mumper: Mumper = Mumper::new(cc);
 
         // Register Custom Component
-        let oscillating_color_storage =
-            OscillatingColorStorage::new(MumperECS::register_storage_id(&mut mumper.ecs));
+        let ocillating_color_storage_id = MumperECS::register_storage_id(&mut mumper.ecs);
+        let oscillating_color_storage = OscillatingColorStorage::new(ocillating_color_storage_id);
+        MumperECS::register_storage(&mut mumper.components, oscillating_color_storage);
 
         let mut mumper_demo = Self {
             mumper,
             settings,
-            oscillating_color_storage,
+            ocillating_color_storage_id: ocillating_color_storage_id - 7,
         };
 
         mumper_demo.default_scene();
@@ -131,13 +133,47 @@ impl MumperDemo {
         self.default_scene();
     }
 
-    fn logic_update(&mut self) {
-        self.oscillating_components_logic();
+    fn logic_update(&mut self, dt: &f32) {
+        self.oscillating_color_system(dt);
     }
 
-    fn oscillating_components_logic(&mut self) {
-        for i in 0..self.oscillating_color_storage.entities.len() {
-            // TODO
+    fn oscillating_color_system(&mut self, dt: &f32) {
+        let any_storage =
+            self.mumper.components.custom_components[self.ocillating_color_storage_id].as_any_mut();
+
+        let Some(oscillating_color_storage) = any_storage.downcast_mut::<OscillatingColorStorage>() else {
+            return;
+        };
+
+        for i in 0..oscillating_color_storage.entities.len() {
+            let entity_id = oscillating_color_storage.entities[i];
+
+            // Oscillate rad
+            oscillating_color_storage.r_rad[i] =
+                (oscillating_color_storage.r_rad[i] + 1.0 * dt) % MAX_RAD;
+            oscillating_color_storage.g_rad[i] =
+                (oscillating_color_storage.g_rad[i] + 1.0 * dt) % MAX_RAD;
+            oscillating_color_storage.b_rad[i] =
+                (oscillating_color_storage.b_rad[i] + 1.0 * dt) % MAX_RAD;
+
+            let r_mult = (1.0 + oscillating_color_storage.r_rad[i].sin()) / 2.0;
+            let g_mult = (1.0 + oscillating_color_storage.g_rad[i].sin()) / 2.0;
+            let b_mult = (1.0 + oscillating_color_storage.b_rad[i].sin()) / 2.0;
+
+            let r = (255.0 * r_mult) as u8;
+            let g = (255.0 * g_mult) as u8;
+            let b = (255.0 * b_mult) as u8;
+
+            let image_color = Color32::from_rgb(r, g, b);
+
+            let renderer_component_id = self
+                .mumper
+                .renderer
+                .shape_renderer_storage
+                .get_component_id(entity_id);
+
+            self.mumper.renderer.shape_renderer_storage.strokes[renderer_component_id].color =
+                image_color;
         }
     }
 
@@ -165,13 +201,22 @@ impl MumperDemo {
             let vertices = gears::circle_vertices(radius, segments);
             let stroke = Stroke::new(settings.stroke_width, settings.stroke_color);
 
-            self.create_shape(
+            let entity_id = self.create_shape(
                 world_pos,
                 vertices,
                 radius,
                 settings.polygon_velocity,
                 stroke,
             );
+
+            // Get Custom Component
+            let any_storage = self.mumper.components.custom_components
+                [self.ocillating_color_storage_id]
+                .as_any_mut();
+
+            if let Some(storage) = any_storage.downcast_mut::<OscillatingColorStorage>() {
+                storage.add(&mut self.mumper.ecs, entity_id, 1.0, 0.0, 2.0);
+            }
         }
     }
 
@@ -183,7 +228,7 @@ impl MumperDemo {
         radius: f32,
         velocity: Vec2,
         stroke: Stroke,
-    ) {
+    ) -> usize {
         let mumper = &mut self.mumper;
 
         // Create entity + Add components = Polygon
@@ -192,8 +237,8 @@ impl MumperDemo {
         MumperECS::add_shape_renderer(mumper, entity_id, vertices, stroke);
         MumperECS::add_radius_collider(mumper, entity_id, radius);
         MumperECS::add_rigidbody(mumper, entity_id, velocity, -1.0, 1.0);
-        self.oscillating_color_storage
-            .add(&mut mumper.ecs, entity_id, 1.0, 0.0, 2.0);
+
+        return entity_id;
     }
 
     // Create a (static) Wall
@@ -371,7 +416,7 @@ impl eframe::App for MumperDemo {
             // Mumper Rendering
             let response = self.mumper.game_update(ui);
 
-            self.logic_update();
+            self.logic_update(&dt);
 
             // Inputs
             ui.input(|input_state: &InputState| {

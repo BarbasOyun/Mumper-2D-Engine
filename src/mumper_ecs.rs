@@ -1,10 +1,12 @@
 // TODO :
+// Storage enum -> Avoid Box
 // Component Dependencies -> On Adding : Add components that the component Depend on -> Sync Physics Components
 // Archetype ECS -> Group Entities by Archetype, Archetype = Entities with the same Components
 // Object pooling = create pool of Archetype + Disable
 
 use egui::Stroke;
 use glam::Vec2;
+use std::any::Any;
 
 use crate::Mumper;
 
@@ -35,10 +37,15 @@ impl MumperECS {
         return id;
     }
 
+    pub fn register_storage<T: Component + 'static>(components: &mut Components, storage: T) {
+        let boxed_storage: Box<dyn Component> = Box::new(storage);
+        components.custom_components.push(boxed_storage);
+    }
+
     // MASK
 
-    pub fn get_mask(id: usize) -> u64 {
-        return 1u64 << (id as u8);
+    pub fn get_component_mask(component_id: usize) -> u64 {
+        return 1u64 << (component_id as u8);
     }
 
     pub fn add_mask(entity_mask: &mut u64, component_mask: u64) {
@@ -116,8 +123,6 @@ impl MumperECS {
     }
 
     pub fn clear_entities(state: &mut Mumper) {
-        let ecs = &mut state.ecs;
-
         // Clear Engine Storages
         state.components.transform_storage.clear_components();
         state.components.radius_collider_storage.clear_components();
@@ -145,6 +150,8 @@ impl MumperECS {
             state.components.custom_components[i].clear_components();
         }
 
+        let ecs = &mut state.ecs;
+
         ecs.entities_bitmask.clear();
         ecs.entity_ids.clear();
     }
@@ -152,7 +159,7 @@ impl MumperECS {
     // ANY COMPONENTS
 
     pub fn has_component(entity_mask: &u64, component_id: usize) -> bool {
-        let component_mask = Self::get_mask(component_id);
+        let component_mask = Self::get_component_mask(component_id);
 
         return (entity_mask & component_mask) != 0;
     }
@@ -488,6 +495,7 @@ impl MumperECS {
     }
 
     // ARCHETYPES + POOLING
+    // TODO
 
     // Create a pool of Entities
     pub fn create_pool() {
@@ -497,12 +505,16 @@ impl MumperECS {
 
 // Allow custom components
 pub trait Component: 'static {
+    fn as_any(&self) -> &dyn Any;
+
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+
+    fn get_id(&self) -> usize;
+
     // Add component with default values
     fn add_default(&mut self, ecs: &mut MumperECS, entity_id: usize);
 
     fn remove(&mut self, ecs: &mut MumperECS, entity_id: usize);
-
-    fn get_id(&self) -> usize;
 
     fn clear_components(&mut self);
 }
@@ -554,7 +566,7 @@ macro_rules! component_storage {
                 $( self.$field_name.push($field_name); )+
 
                 // Update bitmask
-                let mask = MumperECS::get_mask(self.id);
+                let mask = MumperECS::get_component_mask(self.id);
                 MumperECS::add_mask(&mut ecs.entities_bitmask[entity_id], mask);
             }
 
@@ -587,6 +599,14 @@ macro_rules! component_storage {
         }
 
         impl Component for $storage_name {
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+
+            fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+                self
+            }
+
             fn get_id(&self) -> usize {
                 return self.id;
             }
@@ -626,7 +646,7 @@ macro_rules! component_storage {
                 $( self.$field_name.pop(); )+
 
                 // Update bitmask
-                let mask = MumperECS::get_mask(self.id);
+                let mask = MumperECS::get_component_mask(self.id);
                 MumperECS::remove_mask(&mut ecs.entities_bitmask[entity_id], mask);
             }
 
@@ -661,7 +681,7 @@ pub struct Components {
     pub radius_collider_storage: RadiusColliderStorage,
     pub segments_collider_storage: SegmentColliderStorage,
     pub rigidbody_storage: RigidbodyStorage,
-    custom_components: Vec<Box<dyn Component>>,
+    pub custom_components: Vec<Box<dyn Component>>,
 }
 
 impl Components {
