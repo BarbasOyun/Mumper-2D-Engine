@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread; // Doesn't work on Browser
 use std::time::{Duration, Instant};
+use glam::Vec2;
 
 use crate::MumperPhysics;
 use crate::MumperRenderer;
@@ -194,6 +195,41 @@ impl Mumper {
 
     pub fn pause_physic(&mut self, is_paused: bool) {
         self.is_paused.store(is_paused, Ordering::Relaxed);
+    }
+
+    // Create a Shape with a Radius Collider & Rigidbody
+    pub fn create_shape(
+        mumper: &mut Mumper,
+        world_pos: Vec2,
+        vertices: Vec<Vec2>,
+        radius: f32,
+        velocity: Vec2,
+        stroke: Stroke,
+    ) -> usize {
+        // Create entity + Add components = Polygon
+        let entity_id = MumperECS::create_entity(&mut mumper.ecs);
+        MumperECS::add_transform(mumper, entity_id, world_pos, 0.0, Vec2::ONE);
+        MumperECS::add_shape_renderer(mumper, entity_id, vertices, stroke);
+        MumperECS::add_radius_collider(mumper, entity_id, radius);
+        MumperECS::add_rigidbody(mumper, entity_id, velocity, -1.0, 1.0);
+
+        return entity_id;
+    }
+
+    // Create a (static) Wall
+    pub fn create_wall(
+        mumper: &mut Mumper,
+        world_pos: Vec2,
+        rotation: f32,
+        vertices: Vec<Vec2>,
+        thickness: f32,
+        stroke: Stroke,
+    ) {
+        // Create entity + Add components = Polygon
+        let entity_id = MumperECS::create_entity(&mut mumper.ecs);
+        MumperECS::add_transform(mumper, entity_id, world_pos, rotation, Vec2::ONE);
+        MumperECS::add_shape_renderer(mumper, entity_id, vertices, stroke);
+        MumperECS::add_segments_collider(mumper, entity_id, thickness);
     }
 }
 

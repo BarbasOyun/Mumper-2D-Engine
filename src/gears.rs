@@ -1,6 +1,6 @@
 use glam::*;
 
-// MATHS
+/* #region MATHS */
 
 // keep the value outside the specified values
 // TODO : <T> where t is number
@@ -25,7 +25,20 @@ pub fn get_average_point(point1: Vec2, point2: Vec2) -> Vec2 {
     return Vec2::new(average_x, average_y);
 }
 
-// GEOMETRY
+/* #endregion */
+
+/* #region GEOMETRY */
+
+// Rotate a 2D Vector by an angle in degree
+// Counter Clockwise
+pub fn rotate_2d_vector(vector: Vec2, angle: f32) -> Vec2 {
+    let rad_angle = angle.to_radians();
+
+    let x = vector.x * rad_angle.cos() - vector.y * rad_angle.sin();
+    let y = vector.x * rad_angle.sin() + vector.y * rad_angle.cos();
+
+    return Vec2 { x, y };
+}
 
 // return the Counterclockwise normal of a 2D Vector
 pub fn vector_normal(vector: Vec2) -> Vec2 {
@@ -64,3 +77,5 @@ pub fn circle_vertices(radius: f32, segments: u16) -> Vec<Vec2> {
 
     return points;
 }
+
+/* #endregion */

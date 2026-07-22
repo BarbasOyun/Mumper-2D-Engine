@@ -141,7 +141,8 @@ impl MumperDemo {
         let any_storage =
             self.mumper.components.custom_components[self.ocillating_color_storage_id].as_any_mut();
 
-        let Some(oscillating_color_storage) = any_storage.downcast_mut::<OscillatingColorStorage>() else {
+        let Some(oscillating_color_storage) = any_storage.downcast_mut::<OscillatingColorStorage>()
+        else {
             return;
         };
 
@@ -201,7 +202,8 @@ impl MumperDemo {
             let vertices = gears::circle_vertices(radius, segments);
             let stroke = Stroke::new(settings.stroke_width, settings.stroke_color);
 
-            let entity_id = self.create_shape(
+            let entity_id = Mumper::create_shape(
+                &mut self.mumper,
                 world_pos,
                 vertices,
                 radius,
@@ -218,43 +220,6 @@ impl MumperDemo {
                 storage.add(&mut self.mumper.ecs, entity_id, 1.0, 0.0, 2.0);
             }
         }
-    }
-
-    // Create a Shape with a Radius Collider & Rigidbody
-    fn create_shape(
-        &mut self,
-        world_pos: Vec2,
-        vertices: Vec<Vec2>,
-        radius: f32,
-        velocity: Vec2,
-        stroke: Stroke,
-    ) -> usize {
-        let mumper = &mut self.mumper;
-
-        // Create entity + Add components = Polygon
-        let entity_id = MumperECS::create_entity(&mut mumper.ecs);
-        MumperECS::add_transform(mumper, entity_id, world_pos, 0.0, Vec2::ONE);
-        MumperECS::add_shape_renderer(mumper, entity_id, vertices, stroke);
-        MumperECS::add_radius_collider(mumper, entity_id, radius);
-        MumperECS::add_rigidbody(mumper, entity_id, velocity, -1.0, 1.0);
-
-        return entity_id;
-    }
-
-    // Create a (static) Wall
-    fn create_wall(
-        mumper: &mut Mumper,
-        world_pos: Vec2,
-        rotation: f32,
-        vertices: Vec<Vec2>,
-        thickness: f32,
-        stroke: Stroke,
-    ) {
-        // Create entity + Add components = Polygon
-        let entity_id = MumperECS::create_entity(&mut mumper.ecs);
-        MumperECS::add_transform(mumper, entity_id, world_pos, rotation, Vec2::ONE);
-        MumperECS::add_shape_renderer(mumper, entity_id, vertices, stroke);
-        MumperECS::add_segments_collider(mumper, entity_id, thickness);
     }
 
     // UI COMPONENTS
@@ -344,7 +309,7 @@ impl MumperDemo {
 
         let square_stroke = Stroke::new(5.0, Color32::LIGHT_YELLOW);
 
-        Self::create_wall(
+        Mumper::create_wall(
             mumper,
             Vec2::ZERO,
             0.785,
@@ -392,7 +357,8 @@ impl MumperDemo {
         ];
 
         for i in 0..radiuses.len() {
-            self.create_shape(
+            Mumper::create_shape(
+                &mut self.mumper,
                 positions[i],
                 vertices[i].clone(),
                 radiuses[i],

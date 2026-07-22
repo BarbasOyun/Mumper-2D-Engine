@@ -28,4 +28,4 @@ Checkout the [demo app](https://barbasoyun.github.io/Mumper-2D-Engine/) implemen
 ![Mumper Physic 02](assets/Mumper-Physic-02.gif)</br>
 ![Mumper Physic 03](assets/Mumper-Physic-03.gif)</br>
 ![Mumper Physic 04](assets/Mumper-Physic-04.gif)</br>
-![Custom Component](assets/Mumper-Cusrom-Component.gif)</br>
+![Custom Component](assets/Mumper-Custom-Component.gif)</br>
